@@ -21,11 +21,15 @@ api/
 
 Shared helper modules use a leading underscore so Vercel does not turn them into standalone Functions. New public APIs should be added under `api/v1/` and may reuse code from `api/lib/`.
 
-## Endpoint
+## Production API
+
+Canonical production endpoint:
 
 ```text
-POST /api/v1/keyword-volume
+POST https://newwords-discovery.vercel.app/api/v1/keyword-volume
 ```
+
+Agents should use this stable production domain, not random deployment URLs.
 
 Default query scope:
 
@@ -33,11 +37,11 @@ Default query scope:
 - language: `1000` (English)
 - network: `GOOGLE_SEARCH`
 
-See [`docs/API.md`](docs/API.md) for the full request/response contract.
+See [`docs/API.md`](docs/API.md) for the full request/response contract and [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) for the exact AI/Agent calling rules.
 
-## Vercel environment variables
+## Secret model
 
-Set these in the Vercel project. Do not commit their values to GitHub.
+Google credentials remain server-side in Vercel:
 
 ```text
 GOOGLE_ADS_CLIENT_ID
@@ -53,21 +57,31 @@ Optional:
 GOOGLE_ADS_API_VERSION=v24
 ```
 
-Generate a strong private API key locally, for example:
+`SEO_DATA_API_KEY` is the server-side verification secret. The calling Agent must also have the same secret available in its own secure runtime, but it should be stored there once rather than pasted into prompts or supplied on every request.
+
+Recommended caller-side variable name:
+
+```text
+NEWWORDS_DISCOVERY_API_KEY
+```
+
+The value of `NEWWORDS_DISCOVERY_API_KEY` must equal Vercel's `SEO_DATA_API_KEY`.
+
+Never commit either value to GitHub and never put the literal secret in README, Agent.md, Skills, scripts, prompts, or chat messages.
+
+Generate/rotate a strong private API key locally, for example:
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-Use the same `SEO_DATA_API_KEY` in Vercel and in the calling agent's secret store.
-
 ## Deploy
 
 1. Import this GitHub repository into Vercel.
 2. Keep the repository root as the Vercel project root.
-3. Add the environment variables above for Production (and Preview only if needed).
+3. Add the server environment variables above for Production (and Preview only if needed).
 4. Deploy.
-5. Call `POST https://<deployment>/api/v1/keyword-volume` with the Bearer key.
+5. Call the canonical production endpoint with `Authorization: Bearer <caller secret>`.
 
 The Python function uses only the standard library. Vercel recognizes Python files under `api/` that export a `BaseHTTPRequestHandler` subclass named `handler`.
 
