@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 
-from .auth import is_authorized
-from .config import ConfigError, Settings
-from .google_ads import GoogleAdsClient, UpstreamServiceError, UpstreamTimeout
-from .keyword_volume import (
+from ._auth import is_authorized
+from ._config import ConfigError, Settings
+from ._google_ads import GoogleAdsClient, UpstreamServiceError, UpstreamTimeout
+from ._keyword_volume import (
     RequestValidationError,
     normalize_google_results,
     validate_keyword_volume_request,

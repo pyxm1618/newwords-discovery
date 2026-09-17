@@ -15,5 +15,5 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q
-      - run: python -m compileall -q api src
+      - run: python -m compileall -q api
       - run: python -m json.tool vercel.json >/dev/null

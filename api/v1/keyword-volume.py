@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 
-from src.newwords_api.endpoint import handle_keyword_volume
+from api.lib._endpoint import handle_keyword_volume
 
 
 class handler(BaseHTTPRequestHandler):

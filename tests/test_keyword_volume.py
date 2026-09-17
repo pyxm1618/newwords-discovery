@@ -1,6 +1,6 @@
 import pytest
 
-from src.newwords_api.keyword_volume import (
+from api.lib._keyword_volume import (
     RequestValidationError,
     normalize_google_results,
     validate_keyword_volume_request,

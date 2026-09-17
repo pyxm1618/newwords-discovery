@@ -7,8 +7,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Mapping, Protocol
 
-from .config import Settings
-from .keyword_volume import KeywordVolumeRequest
+from ._config import Settings
+from ._keyword_volume import KeywordVolumeRequest
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 

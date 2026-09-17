@@ -1,7 +1,7 @@
 import pytest
 
-from src.newwords_api.auth import is_authorized
-from src.newwords_api.config import ConfigError, Settings
+from api.lib._auth import is_authorized
+from api.lib._config import ConfigError, Settings
 
 
 def test_authorization_requires_matching_bearer_token():

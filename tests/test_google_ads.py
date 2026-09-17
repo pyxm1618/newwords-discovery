@@ -1,13 +1,13 @@
 import pytest
 
-from src.newwords_api.config import Settings
-from src.newwords_api.google_ads import (
+from api.lib._config import Settings
+from api.lib._google_ads import (
     GoogleAdsClient,
     GoogleAdsUpstreamError,
     GoogleOAuthError,
     UpstreamTimeout,
 )
-from src.newwords_api.keyword_volume import KeywordVolumeRequest
+from api.lib._keyword_volume import KeywordVolumeRequest
 
 
 class FakeTransport:

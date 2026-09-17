@@ -1,8 +1,8 @@
 import json
 
-from src.newwords_api.config import ConfigError, Settings
-from src.newwords_api.endpoint import handle_keyword_volume
-from src.newwords_api.google_ads import GoogleAdsUpstreamError, UpstreamTimeout
+from api.lib._config import ConfigError, Settings
+from api.lib._endpoint import handle_keyword_volume
+from api.lib._google_ads import GoogleAdsUpstreamError, UpstreamTimeout
 
 
 def settings():
