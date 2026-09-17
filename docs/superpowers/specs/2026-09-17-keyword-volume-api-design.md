@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build `newwords-discovery` as an API-layer service for AI agents. The first production capability is a private HTTP API that returns Google Ads Keyword Historical Metrics for one or many keywords. It is designed for Vercel deployment and must not require agents to know Google OAuth details.
+Build `newwords-discovery` as a dedicated API-layer service for AI agents. The first production capability is a private HTTP API that returns Google Ads Keyword Historical Metrics for one or many keywords. Agents must not need Google OAuth details.
 
 ## Scope
 
@@ -10,51 +10,37 @@ Version 1 exposes one endpoint:
 
 - `POST /api/v1/keyword-volume`
 
-The endpoint accepts one or more keywords, defaults to the already verified Google Ads query scope (United States, English, Google Search), exchanges a stored OAuth refresh token for an access token, calls Google Ads `generateKeywordHistoricalMetrics`, and returns normalized JSON.
+The endpoint accepts one or more keywords, defaults to the verified Google Ads scope (United States, English, Google Search), exchanges the stored refresh token for an access token, calls Google Ads `generateKeywordHistoricalMetrics`, and returns normalized JSON.
 
-Out of scope for v1:
-
-- keyword discovery logic
-- Google Trends
-- Semrush
-- Similarweb/domain traffic
-- databases or persistent storage
-- user accounts
-- UI
-- rate-limit infrastructure beyond Vercel/platform protections
-
-These may be added later as sibling API endpoints without changing the v1 contract.
+Out of scope for v1: keyword discovery logic, Google Trends, Semrush, Similarweb/domain traffic, databases, user accounts, UI, and custom rate-limit infrastructure. Future data-source APIs are added as sibling endpoints under `api/v1/`.
 
 ## Architecture
 
-The repository is an API service, not a CLI tool. Vercel routes live under `api/`; reusable business logic lives under `src/` so the HTTP adapter remains thin and testable.
+This repository is the API layer. All runtime code lives under the top-level `api/` directory; there is no separate `src/` application layer.
 
 ```text
 newwords-discovery/
 ├── api/
-│   └── v1/
-│       └── keyword-volume.py
-├── src/
-│   └── newwords_api/
+│   ├── __init__.py
+│   ├── v1/
+│   │   └── keyword-volume.py
+│   └── lib/
 │       ├── __init__.py
-│       ├── auth.py
-│       ├── config.py
-│       ├── google_ads.py
-│       └── keyword_volume.py
+│       ├── _auth.py
+│       ├── _config.py
+│       ├── _endpoint.py
+│       ├── _google_ads.py
+│       └── _keyword_volume.py
 ├── tests/
-│   ├── test_auth.py
-│   ├── test_google_ads.py
-│   └── test_keyword_volume.py
 ├── docs/
-│   ├── API.md
-│   └── superpowers/
-│       └── ...
 ├── requirements.txt
 ├── pytest.ini
 ├── vercel.json
 ├── .gitignore
 └── README.md
 ```
+
+`api/v1/` contains public Vercel HTTP entrypoints. `api/lib/` contains private shared implementation. Helper module filenames begin with `_` so Vercel does not turn utility modules into standalone Functions. This keeps the public routing layer obvious while allowing many future APIs to share auth, configuration, transports, and normalization code.
 
 ## API contract
 
@@ -120,13 +106,8 @@ Google missing values are returned as JSON `null`, never silently converted to `
 The service uses the REST flow already verified manually:
 
 1. `POST https://oauth2.googleapis.com/token` with client ID, client secret, refresh token, and `grant_type=refresh_token`.
-2. Use the returned access token to call:
-   `POST https://googleads.googleapis.com/{version}/customers/{customer_id}:generateKeywordHistoricalMetrics`.
-3. Send the Google Ads request with:
-   - `keywords`
-   - `geoTargetConstants`
-   - `language`
-   - `keywordPlanNetwork`
+2. Use the returned access token to call `POST https://googleads.googleapis.com/{version}/customers/{customer_id}:generateKeywordHistoricalMetrics`.
+3. Send `keywords`, `geoTargetConstants`, `language`, and `keywordPlanNetwork`.
 
 Default API version is `v24`, because that exact version and request shape were manually verified successfully on 2026-09-17. `GOOGLE_ADS_API_VERSION` may override it without a code change.
 
@@ -170,8 +151,8 @@ Errors use a stable JSON shape:
 
 ## Testing
 
-Tests are network-free. OAuth and Google Ads HTTP calls are mocked at the transport boundary. Tests cover authentication, request validation, default scope, de-duplication, normalization of Google results, upstream failures, and secret-safe error responses.
+Tests are network-free. OAuth and Google Ads HTTP calls are replaced with fakes at the transport boundary. Tests cover authentication, request validation, default scope, de-duplication, result normalization, upstream failures, secret-safe errors, Vercel adapter loading, and the API-only repository layout.
 
 ## Deployment
 
-Vercel deploys the Python function under `api/v1/keyword-volume.py`. Production secrets are configured only in Vercel Environment Variables. AI agents receive only the service URL and `SEO_DATA_API_KEY`; they do not receive Google OAuth credentials.
+Vercel deploys public Python Functions under `api/v1/`. Production secrets are configured only in Vercel Environment Variables. AI agents receive only the service URL and `SEO_DATA_API_KEY`; they do not receive Google OAuth credentials.
