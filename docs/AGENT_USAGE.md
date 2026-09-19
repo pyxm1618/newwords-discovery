@@ -11,6 +11,16 @@ POST https://newwords-discovery.vercel.app/api/v1/trends
 
 Agent 使用固定生产域名，不使用随机 Preview URL 作为长期配置。
 
+## 当前生产状态
+
+截至 **2026-09-19**，两个接口都已完成真实 authenticated smoke：
+
+- `/api/v1/trends`：生产 HTTP `200`，真实返回 `google_trends_bigquery` 数据及 BigQuery usage。
+- `/api/v1/keyword-volume`：生产 HTTP `200`，真实返回 `google_ads` 历史搜索量。
+- 本次验证对应生产代码 revision：`c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`。
+
+这表示当前生产链路已验证，不表示未来部署自动继承“已验证”状态。部署新 revision、轮换密钥或修改上游权限后，应重新做 authenticated smoke。
+
 ## Agent 只持有一个调用密钥
 
 服务端：
@@ -124,3 +134,13 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 正常模式是：服务端保存上游凭据，调用端保存一次 `NEWWORDS_DISCOVERY_API_KEY`，之后 Agent 自动调用。
 
 不要每次任务都重新向用户索取 Google Ads OAuth、BigQuery service account 或 API Key。
+
+## 服务端凭据运维
+
+BigQuery 的 Service Account JSON 只保存在 Vercel 的 `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON` 中。生产验证通过后，本地下载的 JSON 文件应删除；但 Google Cloud 中与该 JSON 对应的 key 不能删除，否则 Vercel 会失去认证能力。
+
+Service Account 需要具备创建 BigQuery query job 的权限；当前生产配置使用 `BigQuery Job User`。
+
+如果为了首次创建 key 临时覆盖了“禁止创建服务账号密钥”的组织政策，完成 key 创建后应恢复继承/限制状态。恢复“禁止创建新 key”不会让已经创建且正在使用的 key 失效。
+
+GitHub Actions 中可保存同值的 `SEO_DATA_API_KEY` repository secret，用于不暴露真实值的生产回归 smoke。Agent 日常调用仍建议使用环境变量 `NEWWORDS_DISCOVERY_API_KEY`。
