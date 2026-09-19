@@ -17,3 +17,26 @@ jobs:
       - run: python -m pytest -q
       - run: python -m compileall -q api
       - run: python -m json.tool vercel.json >/dev/null
+
+      - name: Temporary final production Trends config probe
+        if: github.head_ref == 'chore/prod-api-smoke-final-20260919'
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /tmp/trends.json -w '%{http_code}'             -X POST 'https://newwords-discovery.vercel.app/api/v1/trends'             -H 'Content-Type: application/json'             --data '{"kind":"rising","country_code":"US","limit":5}')"
+          echo "status=$code"
+          python - <<'PY'
+          import json
+          data = json.load(open("/tmp/trends.json"))
+          print("body=" + json.dumps(data, ensure_ascii=False))
+          PY
+          if [ "$code" = "401" ]; then
+            echo "RESULT=config_parsed_and_accepted"
+            exit 0
+          fi
+          if [ "$code" = "500" ]; then
+            echo "RESULT=config_invalid_or_missing"
+            exit 2
+          fi
+          echo "RESULT=unexpected_status"
+          exit 3
