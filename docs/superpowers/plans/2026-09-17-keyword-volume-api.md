@@ -4,7 +4,7 @@
 
 This file is retained as the implementation record for the first `newwords-discovery` API. It is **not** the template for future APIs.
 
-The original draft referenced `src/newwords_api/`. The final repository architecture intentionally removed that layer. All runtime implementation now lives under `api/`, with public Vercel routes in `api/v1/` and private modules in `api/lib/`.
+The original draft used a parallel application layer. The final repository architecture intentionally removed that layer. All runtime implementation now lives under `api/`, with public Vercel routes in `api/v1/` and private modules in `api/lib/`.
 
 **Spec:** `docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md`
 
