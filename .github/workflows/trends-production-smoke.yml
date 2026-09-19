@@ -1,0 +1,118 @@
+name: trends-production-smoke
+
+on:
+  push:
+    branches:
+      - fix/trends-history-backfill-20260919
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Authenticated production smoke
+        env:
+          API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          key = os.environ.get("API_KEY", "")
+          if not key:
+              raise SystemExit("SEO_DATA_API_KEY repository secret is missing")
+
+          url = "https://newwords-discovery.vercel.app/api/v1/trends"
+          cases = [
+              ("us-rising-baseline", "rising", "US", 5),
+              ("us-top", "top", "US", 3),
+              ("gb-rising", "rising", "GB", 3),
+              ("gb-top", "top", "GB", 3),
+          ]
+
+          for label, kind, country, limit in cases:
+              body = json.dumps(
+                  {
+                      "kind": kind,
+                      "country_code": country,
+                      "refresh_date": "2026-09-18",
+                      "limit": limit,
+                  }
+              ).encode("utf-8")
+              req = urllib.request.Request(
+                  url,
+                  data=body,
+                  headers={
+                      "Authorization": f"Bearer {key}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as response:
+                      payload = json.load(response)
+                      status = response.status
+              except urllib.error.HTTPError as exc:
+                  error_body = exc.read().decode("utf-8", errors="replace")
+                  print(label, "HTTP", exc.code, error_body[:1000])
+                  raise
+
+              assert status == 200, (label, status)
+              assert payload.get("source") == "google_trends_bigquery", label
+              results = payload.get("results", [])
+              assert 0 < len(results) <= limit, (label, len(results))
+              assert payload.get("history", {}).get("granularity") == "week", label
+
+              print(
+                  "CASE",
+                  label,
+                  "HTTP",
+                  status,
+                  "results_count",
+                  len(results),
+                  "history_meta",
+                  json.dumps(payload.get("history"), sort_keys=True),
+                  "usage",
+                  json.dumps(payload.get("usage"), sort_keys=True),
+              )
+
+              for item in results:
+                  history = item.get("history", [])
+                  assert len(history) > 52, (label, item.get("term"), len(history))
+                  weeks = [point.get("week") for point in history]
+                  assert weeks == sorted(weeks), (label, item.get("term"))
+                  if kind == "rising":
+                      assert item.get("percent_gain") is not None, (
+                          label,
+                          item.get("term"),
+                      )
+                  else:
+                      assert item.get("percent_gain") is None, (
+                          label,
+                          item.get("term"),
+                      )
+
+                  mid = history[len(history) // 2]
+                  samples = [history[0], mid, history[-1]]
+                  print(
+                      "TERM",
+                      label,
+                      json.dumps(item.get("term"), ensure_ascii=False),
+                      "rank",
+                      item.get("rank"),
+                      "percent_gain",
+                      item.get("percent_gain"),
+                      "history_points",
+                      len(history),
+                      "earliest",
+                      history[0].get("week"),
+                      "latest",
+                      history[-1].get("week"),
+                      "samples",
+                      json.dumps(samples, ensure_ascii=False, sort_keys=True),
+                  )
+          PY
