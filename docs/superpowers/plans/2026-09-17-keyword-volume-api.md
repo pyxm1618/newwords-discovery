@@ -4,6 +4,8 @@
 
 Production regression smoke: authenticated `POST /api/v1/keyword-volume` returned HTTP `200` with live `google_ads` data on production revision `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
 
+That SHA is a dated **Keyword Volume acceptance revision only**. It is not the current repository-wide revision and must not be reused as the implementation revision for the later Google Trends rolling-history repair.
+
 This file is retained as the implementation record for the first `newwords-discovery` API. It is **not** the template for future APIs.
 
 The original draft used a parallel application layer. The final repository architecture intentionally removed that layer. All runtime implementation now lives under `api/`, with public Vercel routes in `api/v1/` and private modules in `api/lib/`.
