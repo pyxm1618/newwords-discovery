@@ -25,56 +25,66 @@ The contracts below describe implemented routes. A route is only production-veri
 
 ## Production acceptance record — 2026-09-19
 
-Current production status: **verified**.
+Current production Trends status: **verified with rolling history**.
 
-The production deployment for `main` revision `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c` reached Vercel `READY`, then both upstream paths were called with a valid Bearer token.
+Implementation revision `8b2096a49f3026fe61fdc2872cada82f9a2d0356` reached Vercel Production `READY`, then the canonical production endpoint was called with the existing Bearer secret against all four Google Trends table routes for `refresh_date=2026-09-18`.
 
-### Trends smoke
+### Google Trends four-route smoke
 
-Request:
+| Case | Results | History points / term | Earliest week | Latest week | Bytes processed | Bytes billed | Cache |
+| --- | ---: | ---: | --- | --- | ---: | ---: | --- |
+| US rising, limit 5 | 5 | 261 | 2021-09-19 | 2026-09-13 | 79,252,802 | 79,691,776 | false |
+| US top, limit 3 | 3 | 261 | 2021-09-19 | 2026-09-13 | 74,652,288 | 75,497,472 | false |
+| GB rising, limit 3 | 3 | 262 | 2021-09-12 | 2026-09-13 | 440,327,130 | 440,401,920 | false |
+| GB top, limit 3 | 3 | 262 | 2021-09-12 | 2026-09-13 | 354,454,222 | 355,467,264 | false |
 
-```json
-{
-  "kind": "rising",
-  "country_code": "US",
-  "refresh_date": "2026-09-18",
-  "limit": 5
-}
-```
-
-Observed production result:
+All four returned:
 
 ```text
 HTTP 200
 source = google_trends_bigquery
-total_bytes_processed = 44779770
-total_bytes_billed = 45088768
-cache_hit = false
-results_count = 5
+history.window = rolling_5_years
+history.granularity = week
+history.score_aggregation = mean_across_available_regions
 ```
 
-The response contained real Google Trends rows, proving the full path:
+The live rows proved that the selected daily partition contains hundreds of distinct historical `week` rows per term. The smoke also observed real null scores, real regional contribution counts, Rising `percent_gain`, and Top `percent_gain=null`.
+
+One manually inspected Rising term was:
 
 ```text
-Vercel → service-account credential → Google authentication
-→ BigQuery query job → public Google Trends dataset → API response
+refresh_date = 2026-09-18
+term = barcelona vs racing santander
+rank = 1
+percent_gain = 2900
+history_points = 261
+earliest = 2021-09-19, score = null
+middle sample = 2024-03-17, score = 46.0
+latest = 2026-09-13, score = 77.66494845360823
 ```
 
-### Keyword Volume regression smoke
+This confirms that `history` is the same selected partition's historical backfill rather than a separately scanned sequence of old `refresh_date` partitions.
 
-Observed production result:
+### Cost comparison for the same US Rising request
+
+The earlier candidate-only production request for `US/rising/2026-09-18/limit=5` processed `44,779,770` bytes and billed `45,088,768` bytes.
+
+The rolling-history implementation processed `79,252,802` bytes and billed `79,691,776` bytes for the same request shape: about `1.77×` the previous scan, not a multi-year partition scan. `BIGQUERY_MAX_BYTES_BILLED` remains enforced.
+
+### Keyword Volume isolation
+
+The Trends repair did not modify:
 
 ```text
-HTTP 200
-source = google_ads
-keyword = i ching online
-avg_monthly_searches = 22200
-competition = LOW
+api/v1/keyword-volume.py
+api/lib/_endpoint.py
+api/lib/_keyword_volume.py
+api/lib/_google_ads.py
 ```
 
-These values are a dated acceptance snapshot, not hard-coded product guarantees. Upstream data can change on later calls.
+The existing Keyword Volume contract and Google Ads implementation remain unchanged.
 
-A future deployment or credential rotation requires a new authenticated smoke before the new state is called production-verified.
+These values are dated acceptance snapshots, not hard-coded product guarantees. Upstream data can change on later calls.
 
 ---
 
