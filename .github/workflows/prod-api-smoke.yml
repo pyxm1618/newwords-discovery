@@ -1,0 +1,106 @@
+name: production API smoke (temporary)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/prod-api-smoke.yml'
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      PROD_BASE_URL: https://newwords-discovery.vercel.app
+      NEWWORDS_DISCOVERY_API_KEY: ${{ secrets.NEWWORDS_DISCOVERY_API_KEY }}
+      SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+    steps:
+      - name: Probe server configuration without caller secret
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          trends_code="$(curl -sS -o /tmp/trends-unauth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/trends" \
+            -H 'Content-Type: application/json' \
+            --data '{"kind":"rising","country_code":"US","limit":5}')"
+          echo "trends_unauth_status=$trends_code"
+          python - <<'PY'
+          import json
+          p = "/tmp/trends-unauth.json"
+          try:
+              data = json.load(open(p))
+          except Exception:
+              data = {"raw": open(p, errors="replace").read()}
+          print("trends_unauth_body=" + json.dumps(data, ensure_ascii=False))
+          PY
+
+          volume_code="$(curl -sS -o /tmp/volume-unauth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/keyword-volume" \
+            -H 'Content-Type: application/json' \
+            --data '{"keywords":["i ching online"]}')"
+          echo "keyword_volume_unauth_status=$volume_code"
+          python - <<'PY'
+          import json
+          p = "/tmp/volume-unauth.json"
+          try:
+              data = json.load(open(p))
+          except Exception:
+              data = {"raw": open(p, errors="replace").read()}
+          print("keyword_volume_unauth_body=" + json.dumps(data, ensure_ascii=False))
+          PY
+
+      - name: Authenticated production smoke when caller secret exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          KEY="$NEWWORDS_DISCOVERY_API_KEY"
+          if [ -z "$KEY" ]; then KEY="$SEO_DATA_API_KEY"; fi
+
+          if [ -z "$KEY" ]; then
+            echo "caller_secret_present=no"
+            echo "authenticated_smoke=skipped"
+            exit 0
+          fi
+
+          echo "::add-mask::$KEY"
+          echo "caller_secret_present=yes"
+
+          trends_code="$(curl -sS -o /tmp/trends-auth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/trends" \
+            -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"kind":"rising","country_code":"US","limit":5}')"
+          echo "trends_auth_status=$trends_code"
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("/tmp/trends-auth.json"))
+          print("trends_auth_body=" + json.dumps(data, ensure_ascii=False))
+          if "error" in data:
+              sys.exit(2)
+          assert data.get("source") == "google_trends_bigquery"
+          assert isinstance(data.get("results"), list)
+          usage = data.get("usage")
+          assert isinstance(usage, dict)
+          for key in ("total_bytes_processed", "total_bytes_billed", "cache_hit"):
+              assert key in usage
+          PY
+          test "$trends_code" = "200"
+
+          volume_code="$(curl -sS -o /tmp/volume-auth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/keyword-volume" \
+            -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"keywords":["i ching online"]}')"
+          echo "keyword_volume_auth_status=$volume_code"
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("/tmp/volume-auth.json"))
+          print("keyword_volume_auth_body=" + json.dumps(data, ensure_ascii=False))
+          if "error" in data:
+              sys.exit(3)
+          assert data.get("source") == "google_ads"
+          assert isinstance(data.get("results"), list)
+          PY
+          test "$volume_code" = "200"
