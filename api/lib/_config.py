@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 
 class ConfigError(RuntimeError):
@@ -51,4 +52,67 @@ class Settings:
             customer_id=customer_id,
             api_key=values["SEO_DATA_API_KEY"],
             api_version=api_version,
+        )
+
+
+@dataclass(frozen=True)
+class BigQuerySettings:
+    project_id: str
+    service_account_info: dict[str, Any]
+    api_key: str
+    location: str = "US"
+    maximum_bytes_billed: int = 1_000_000_000
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> "BigQuerySettings":
+        source = env if env is not None else os.environ
+
+        api_key = source.get("SEO_DATA_API_KEY", "").strip()
+        if not api_key:
+            raise ConfigError("missing required environment variable: SEO_DATA_API_KEY")
+
+        raw_credentials = source.get("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON", "").strip()
+        if not raw_credentials:
+            raise ConfigError(
+                "missing required environment variable: GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON"
+            )
+        try:
+            service_account_info = json.loads(raw_credentials)
+        except json.JSONDecodeError as exc:
+            raise ConfigError("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON must be valid JSON") from exc
+        if not isinstance(service_account_info, dict):
+            raise ConfigError("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON must be a JSON object")
+
+        required_fields = ("client_email", "private_key", "token_uri")
+        if service_account_info.get("type") != "service_account" or any(
+            not service_account_info.get(field) for field in required_fields
+        ):
+            raise ConfigError("GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON is incomplete")
+
+        project_id = source.get("GOOGLE_CLOUD_PROJECT", "").strip()
+        if not project_id:
+            project_id = str(service_account_info.get("project_id", "")).strip()
+        if not project_id:
+            raise ConfigError(
+                "GOOGLE_CLOUD_PROJECT or service-account project_id is required"
+            )
+
+        location = source.get("BIGQUERY_LOCATION", "US").strip() or "US"
+
+        raw_maximum = source.get(
+            "BIGQUERY_MAX_BYTES_BILLED", "1000000000"
+        ).strip()
+        try:
+            maximum_bytes_billed = int(raw_maximum)
+        except ValueError as exc:
+            raise ConfigError("BIGQUERY_MAX_BYTES_BILLED must be a positive integer") from exc
+        if maximum_bytes_billed <= 0:
+            raise ConfigError("BIGQUERY_MAX_BYTES_BILLED must be a positive integer")
+
+        return cls(
+            project_id=project_id,
+            service_account_info=service_account_info,
+            api_key=api_key,
+            location=location,
+            maximum_bytes_billed=maximum_bytes_billed,
         )
