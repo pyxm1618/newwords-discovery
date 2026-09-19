@@ -1,3 +1,4 @@
+# final verification after docs-only main deployment
 name: trends-production-smoke
 
 on:
