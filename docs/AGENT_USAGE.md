@@ -4,65 +4,44 @@
 
 ## 固定生产地址
 
-Keyword Volume API 的正式地址为：
-
 ```text
 POST https://newwords-discovery.vercel.app/api/v1/keyword-volume
+POST https://newwords-discovery.vercel.app/api/v1/trends
 ```
 
-`newwords-discovery.vercel.app` 是当前 Vercel 项目的生产域名。普通的 deployment URL 会变化，Agent 不应使用带随机后缀的 deployment URL。
+Agent 必须使用固定生产域名，不使用随机 deployment URL。
 
-## Agent 不需要 Google 凭据
+## Agent 只持有本服务的 Bearer Key
 
-以下凭据只保存在 Vercel 服务端，调用方不应持有：
-
-```text
-GOOGLE_ADS_CLIENT_ID
-GOOGLE_ADS_CLIENT_SECRET
-GOOGLE_ADS_REFRESH_TOKEN
-GOOGLE_ADS_CUSTOMER_ID
-```
-
-Agent 只需要访问本服务，并使用本服务自己的 Bearer API Key。
-
-## API Key 的服务端与调用端角色
-
-Vercel 中保存：
+Vercel 服务端保存：
 
 ```text
 SEO_DATA_API_KEY
 ```
 
-这是服务端用于验证请求的密钥。
-
-调用端需要持有同一个值，但建议在调用端保存为：
+调用端保存同一个值，建议变量名：
 
 ```text
 NEWWORDS_DISCOVERY_API_KEY
 ```
 
-两者的值相同，但名称不同是为了明确角色：
+不要把真实密钥写进 GitHub、README、提示词、Skill、Agent.md、脚本源码、命令示例或聊天记录。
 
-- `SEO_DATA_API_KEY`：仅 Vercel 服务端使用。
-- `NEWWORDS_DISCOVERY_API_KEY`：仅调用 Agent 的运行环境使用。
-
-不要把真实 API Key 写进 GitHub、README、提示词、Skill、Agent.md、脚本源码、命令示例或聊天记录。
+Agent 不需要直接持有 Google Ads OAuth 凭据，也不需要持有 BigQuery service-account JSON；这些都只保存在 Vercel 服务端。
 
 ## 正确的 Agent 行为
 
-Agent 应遵循以下规则：
-
-1. 使用固定生产 URL，不自行寻找其他 deployment URL。
+1. 使用固定生产 URL。
 2. 从运行环境读取 `NEWWORDS_DISCOVERY_API_KEY`。
 3. 不要求用户每次重新提供 API Key。
 4. 不打印、回显、记录或提交 API Key。
-5. 如果 `NEWWORDS_DISCOVERY_API_KEY` 不存在，只报告“调用端密钥未配置”，不要要求用户把密钥直接贴进聊天。
-6. 请求时通过 `Authorization: Bearer ...` 发送密钥。
-7. Google OAuth、refresh token 和 customer ID 全部由 Vercel 服务端处理。
+5. 如果调用端密钥不存在，只报告“调用端密钥未配置”。
+6. 通过 `Authorization: Bearer ...` 发送。
+7. 根据数据需求选择正确端点，不把 Google Ads 搜索量和 Google Trends 热度混为一谈。
 
-## 调用示例
+## Keyword Volume
 
-调用端已经配置 `NEWWORDS_DISCOVERY_API_KEY` 后：
+用于验证候选词的 Google Ads 月搜索量、广告竞争等历史指标：
 
 ```bash
 curl -X POST 'https://newwords-discovery.vercel.app/api/v1/keyword-volume' \
@@ -71,19 +50,7 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/keyword-volume' \
   --data '{"keywords":["i ching online","i ching reading"]}'
 ```
 
-Agent 不应把环境变量展开后的真实值显示给用户。
-
-## 请求参数
-
-最小请求：
-
-```json
-{
-  "keywords": ["i ching online", "i ching reading"]
-}
-```
-
-默认口径：
+默认：
 
 ```text
 geo: 2840 = United States
@@ -91,45 +58,67 @@ language: 1000 = English
 network: GOOGLE_SEARCH
 ```
 
-也可以显式覆盖：
+`competition` 与 `competition_index` 不是 SEO KD。
+
+## Google Trends BigQuery
+
+用于从 Google 官方 BigQuery 公共数据集中获取每日 Top / Rising 候选词。
+
+最常用的新词发现请求：
+
+```bash
+curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
+  -H "Authorization: Bearer $NEWWORDS_DISCOVERY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"kind":"rising","country_code":"US"}'
+```
+
+指定国家和日期：
 
 ```json
 {
-  "keywords": ["i ching online"],
-  "geo_target_constant": "2840",
-  "language_constant": "1000",
-  "network": "GOOGLE_SEARCH"
+  "kind": "rising",
+  "country_code": "GB",
+  "refresh_date": "2026-09-18",
+  "limit": 25
 }
 ```
 
-## 返回数据
+规则：
 
-成功时返回结构化 JSON，例如：
+- `kind=rising`：优先用于发现突然上升的候选词。
+- `kind=top`：查看当天 Top 搜索词。
+- `country_code`：ISO 两位国家码。
+- `refresh_date`：不传时默认 UTC 昨天。
+- `limit`：1–25。
+- 返回的是公共数据集的每日候选词，不是任意关键词的 Trends 曲线。
+
+返回中必须保留并可记录：
 
 ```json
 {
-  "source": "google_ads",
-  "query": {
-    "geo_target_constant": "2840",
-    "language_constant": "1000",
-    "network": "GOOGLE_SEARCH"
-  },
-  "results": [
-    {
-      "keyword": "i ching online",
-      "avg_monthly_searches": 22200,
-      "competition": "LOW",
-      "competition_index": 0,
-      "monthly_search_volumes": []
-    }
-  ]
+  "usage": {
+    "total_bytes_processed": 123456,
+    "total_bytes_billed": 10000000,
+    "cache_hit": false
+  }
 }
 ```
 
-`competition` 和 `competition_index` 是 Google Ads 广告竞争指标，不是 SEO Keyword Difficulty。
+这三个字段用于实际核算 BigQuery 扫描量和缓存命中，不应被 Agent 丢弃。
+
+## 找新词时的建议调用顺序
+
+当任务目标是发现新词时：
+
+1. 先用 `/api/v1/trends` 的 `rising` 获取当天候选词。
+2. 按既有业务规则排除品牌词、明显事件噪声和无关词。
+3. 再把保留候选词批量发送到 `/api/v1/keyword-volume` 获取 Google Ads 搜索量。
+4. 后续 KD、allintitle 等筛选走对应数据源，不要把 BigQuery rank 当成 KD，也不要把 Google Ads competition 当成 KD。
+5. 保存 Trends 返回的 `refresh_date` 与 `usage`，确保每轮结果可追溯。
 
 ## 一次配置，而不是每次提供
 
-Bearer Key 必须同时存在于服务端和调用端，这是任何私有 API 认证的基本要求。Vercel 环境变量负责保存服务端副本；调用 Agent 的 Secret Store / 环境变量负责保存调用端副本。
+Bearer Key 必须同时存在于服务端和调用端。Google Ads OAuth 与 BigQuery service-account JSON 只存在服务端。
 
-正常状态应是：用户只配置一次，之后 Agent 自动读取并调用，而不是每次请求都向用户索要密钥。
+正常状态是：用户配置一次，之后 Agent 自动读取并调用，而不是每次请求都向用户索要密钥或 Google 凭据。
