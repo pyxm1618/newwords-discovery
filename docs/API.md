@@ -1,35 +1,37 @@
 # API
 
-All endpoints use:
+Canonical domain:
+
+```text
+https://newwords-discovery.vercel.app
+```
+
+All routes use:
 
 ```http
 Authorization: Bearer <API_KEY>
 Content-Type: application/json
 ```
 
-Server-side, Vercel stores the expected Bearer secret as:
+Vercel stores the expected Bearer secret as:
 
 ```text
 SEO_DATA_API_KEY
 ```
 
-Calling Agents should store the same value once in their secure runtime as `NEWWORDS_DISCOVERY_API_KEY`.
+Calling agents should store the same value as `NEWWORDS_DISCOVERY_API_KEY`.
+
+The contracts below describe implemented routes. A route is only production-verified after its current Vercel deployment is READY and an authenticated smoke request reaches the real upstream successfully. Build success alone does not prove upstream credentials or permissions.
 
 ---
 
 ## `POST /api/v1/keyword-volume`
 
-Canonical production URL:
-
-```text
-https://newwords-discovery.vercel.app/api/v1/keyword-volume
-```
-
-Returns Google Ads Keyword Historical Metrics in normalized JSON.
+Returns normalized Google Ads Keyword Historical Metrics.
 
 ### Request
 
-Minimal request:
+Minimal:
 
 ```json
 {
@@ -37,7 +39,7 @@ Minimal request:
 }
 ```
 
-Explicit scope:
+Explicit:
 
 ```json
 {
@@ -50,11 +52,11 @@ Explicit scope:
 
 Rules:
 
-- `keywords` is required and must contain 1–10,000 non-empty strings.
-- duplicate keywords are removed while preserving first-seen order.
-- `geo_target_constant` defaults to `2840`.
-- `language_constant` defaults to `1000`.
-- `network` defaults to `GOOGLE_SEARCH` and also accepts `GOOGLE_SEARCH_AND_PARTNERS`.
+- `keywords`: required, 1–10,000 non-empty strings.
+- duplicates are removed while preserving first-seen order.
+- `geo_target_constant`: default `2840` (United States).
+- `language_constant`: default `1000` (English).
+- `network`: default `GOOGLE_SEARCH`; also accepts `GOOGLE_SEARCH_AND_PARTNERS`.
 
 ### Success response
 
@@ -80,27 +82,39 @@ Rules:
 }
 ```
 
-The numbers above show the response schema; the endpoint requests current Google Ads data.
+The numbers above illustrate the response shape. The endpoint requests current Google Ads data at call time.
 
 `competition` and `competition_index` are advertising competition metrics, not SEO Keyword Difficulty.
+
+### Server configuration
+
+Required:
+
+```text
+SEO_DATA_API_KEY
+GOOGLE_ADS_CLIENT_ID
+GOOGLE_ADS_CLIENT_SECRET
+GOOGLE_ADS_REFRESH_TOKEN
+GOOGLE_ADS_CUSTOMER_ID
+```
+
+Optional:
+
+```text
+GOOGLE_ADS_API_VERSION=v24
+```
 
 ---
 
 ## `POST /api/v1/trends`
 
-Canonical production URL:
+Returns daily Top or Rising terms from Google's public Google Trends dataset in BigQuery.
 
-```text
-https://newwords-discovery.vercel.app/api/v1/trends
-```
-
-Returns daily Top or Rising search terms from Google's public Google Trends dataset in BigQuery.
-
-This API is intended for candidate discovery. It does not accept an arbitrary keyword and return its Google Trends curve.
+This route is for candidate discovery. It does not accept an arbitrary keyword and return a Google Trends time-series curve.
 
 ### Request
 
-Minimal request:
+Minimal:
 
 ```json
 {
@@ -109,7 +123,7 @@ Minimal request:
 }
 ```
 
-Explicit request:
+Explicit:
 
 ```json
 {
@@ -122,17 +136,17 @@ Explicit request:
 
 Rules:
 
-- `kind` is `rising` or `top`; default is `rising`.
-- `country_code` is a two-letter ISO country code; default is `US`.
-- `refresh_date` is `YYYY-MM-DD`; default is yesterday in UTC.
-- `limit` is 1–25; default is 25.
-- `US` is routed to the US Google Trends tables.
-- other country codes are routed to the international Google Trends tables.
-- table names are selected from fixed server-side constants; user input is never interpolated as a table name.
-- `refresh_date` and `country_code` are BigQuery query parameters.
+- `kind`: `rising` or `top`; default `rising`.
+- `country_code`: two-letter ISO code; default `US`.
+- `refresh_date`: `YYYY-MM-DD`; default UTC yesterday.
+- `limit`: integer 1–25; default 25.
+- US requests use the fixed US table set.
+- non-US requests use the fixed international table set and parameterize `country_code`.
+- table identifiers come only from server-side constants; user input is never interpolated as a table name.
+- `refresh_date` and international `country_code` are BigQuery query parameters.
 - every query is constrained by `BIGQUERY_MAX_BYTES_BILLED`.
 
-The endpoint groups the historical rows in each daily partition by `term` and returns the daily term/rank candidate list rather than returning the full five-year backfill embedded in that partition.
+The query groups rows by `term` for the selected `refresh_date` and returns the daily term/rank candidate list.
 
 ### Success response
 
@@ -159,9 +173,9 @@ The endpoint groups the historical rows in each daily partition by `term` and re
 }
 ```
 
-`usage` is returned so discovery jobs can track real BigQuery scan/billing behavior instead of estimating it from request counts.
+`usage` is part of the contract so callers can record actual BigQuery scan/billing behavior.
 
-### BigQuery server configuration
+### Server configuration
 
 Required:
 
@@ -178,11 +192,11 @@ BIGQUERY_LOCATION=US
 BIGQUERY_MAX_BYTES_BILLED=1000000000
 ```
 
-`GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON` must contain the complete service-account JSON as one Vercel secret value.
+`GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON` is the complete service-account JSON stored as one server-side secret.
 
 If `GOOGLE_CLOUD_PROJECT` is omitted, the service-account JSON's `project_id` is used.
 
-The service account must have permission to create BigQuery query jobs in the query project. The queried Google Trends tables themselves are public.
+The service account must be permitted to create BigQuery query jobs in the query project. The Google Trends source tables are public, but the query job still needs a project and valid credentials.
 
 ### curl
 
@@ -195,7 +209,9 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 
 ---
 
-## Shared error responses
+## Error contract
+
+Errors use:
 
 ```json
 {
@@ -208,11 +224,11 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 
 Status codes:
 
-- `400` invalid JSON or request parameters
-- `401` missing or invalid Bearer key
-- `405` non-POST method
-- `500` server environment is incomplete
-- `502` Google upstream request failed
-- `504` Google upstream timed out
+- `400`: invalid JSON or request parameters.
+- `401`: missing or invalid Bearer key.
+- `405`: non-POST method.
+- `500`: required server configuration is incomplete.
+- `502`: upstream Google service failed.
+- `504`: upstream request timed out.
 
-Raw Google error bodies and credentials are intentionally not returned.
+Raw credentials, OAuth tokens, service-account material, and raw secret-bearing upstream bodies must never be returned.
