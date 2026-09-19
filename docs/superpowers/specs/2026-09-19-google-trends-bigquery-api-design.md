@@ -20,6 +20,8 @@ Verified implementation revision:
 
 That revision reached Vercel Production `READY` and was then exercised against all four real Google Trends BigQuery table routes.
 
+`8b2096a49f3026fe61fdc2872cada82f9a2d0356` is intentionally retained as the runtime implementation revision for this acceptance. Later documentation-only merges can move `main` without changing the runtime code, so a later docs SHA must not be presented as the implementation revision.
+
 ## Problem fixed
 
 The original query reduced the selected partition to:

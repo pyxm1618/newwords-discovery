@@ -8,6 +8,8 @@ A real authenticated production regression smoke returned HTTP `200` from `POST 
 
 Verified production revision: `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
 
+This is the dated **Keyword Volume** acceptance revision. It is not a repository-wide current revision and does not identify the later Trends rolling-history runtime.
+
 The smoke snapshot is evidence of the live data path, not a promise that upstream metrics will remain numerically unchanged.
 
 This document defines the first API capability in `newwords-discovery`. The repository later gained additional sibling APIs, so this file describes the Keyword Volume capability and its final module boundaries rather than the entire repository tree.

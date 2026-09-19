@@ -13,13 +13,18 @@ Agent 使用固定生产域名，不使用随机 Preview URL 作为长期配置�
 
 ## 当前生产状态
 
-截至 **2026-09-19**，两个接口都已完成真实 authenticated smoke：
+截至 **2026-09-19**，两个接口都完成了真实 authenticated production smoke，但验收 revision 必须按能力分别记录：
 
-- `/api/v1/trends`：生产 HTTP `200`，真实返回 `google_trends_bigquery` 数据及 BigQuery usage。
-- `/api/v1/keyword-volume`：生产 HTTP `200`，真实返回 `google_ads` 历史搜索量。
-- 本次验证对应生产代码 revision：`c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`。
+- `/api/v1/keyword-volume`：生产 HTTP `200`，真实返回 `source=google_ads`。Keyword Volume 的历史验收 revision 是 `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`。
+- `/api/v1/trends`：rolling-history 运行实现 revision `8b2096a49f3026fe61fdc2872cada82f9a2d0356` 到达 Vercel Production `READY` 后，US Rising、US Top、GB Rising、GB Top 四条真实链路全部 HTTP `200`。
+- Trends 首次 uncached 验收使用 `refresh_date=2026-09-18`：US 每个返回 term 有 261 个 weekly history points，GB 有 262 个；四路均返回 `history.score_aggregation=mean_across_available_regions`。
+- 同一 US Rising `limit=5` 请求，rolling-history 版本实际 `total_bytes_processed=79,252,802`、`total_bytes_billed=79,691,776`、`cache_hit=false`。
+- 旧的 `44,779,770 / 45,088,768` 只代表修复前 candidate-only 查询的成本基线，不能再作为当前 rolling-history 接口的验收结果。
+- 后续文档-only 部署后的四路回归 smoke 再次全部 HTTP `200`；由于命中 BigQuery cache，该轮 `processed=0`、`billed=0`。
 
-这表示当前生产链路已验证，不表示未来部署自动继承“已验证”状态。部署新 revision、轮换密钥或修改上游权限后，应重新做 authenticated smoke。
+不要把后续文档提交的 `main` SHA 写成 Trends 运行实现 SHA。对于这次修复，运行实现证据固定指向 `8b2096a49f3026fe61fdc2872cada82f9a2d0356`；文档提交可以继续推动 `main`，但并不改变运行代码。
+
+这表示上述已验收运行链路在该日期真实可用，不表示未来 runtime 修改、密钥轮换或上游权限变化自动继承“已验证”状态；发生这些变化后应重新做 authenticated smoke。
 
 ## Agent 只持有一个调用密钥
 

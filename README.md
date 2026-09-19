@@ -69,17 +69,19 @@ The canonical domain is the API contract.
 
 **Production-verified on 2026-09-19.**
 
-Both public routes were authenticated-smoke-tested against the canonical production domain after the current `main` deployment reached Vercel `READY`:
+Acceptance evidence is tracked **per API capability**, not by pretending one repository SHA represents every historical smoke:
 
-- `POST /api/v1/trends` → HTTP `200`, `source=google_trends_bigquery`, with real Google Trends BigQuery rows and usage metadata.
-- `POST /api/v1/keyword-volume` → HTTP `200`, `source=google_ads`, with real Google Ads historical metrics.
-- The verified production code revision was `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
-- Trends acceptance request: `kind=rising`, `country_code=US`, `refresh_date=2026-09-18`, `limit=5`.
-- That Trends request reported `44,779,770` bytes processed, `45,088,768` bytes billed, and `cache_hit=false`.
+- **Keyword Volume**: authenticated production smoke returned HTTP `200` with `source=google_ads`. Its dated Keyword Volume acceptance revision is `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
+- **Google Trends rolling history**: runtime implementation revision `8b2096a49f3026fe61fdc2872cada82f9a2d0356` reached Vercel Production `READY` and passed authenticated canonical-production smoke against **US Rising, US Top, GB Rising, and GB Top**.
+- The Trends acceptance used `refresh_date=2026-09-18`. Returned terms carried **261 weekly points for US** and **262 weekly points for GB**, with `history.score_aggregation=mean_across_available_regions`.
+- The uncached US Rising `limit=5` acceptance processed `79,252,802` bytes and billed `79,691,776` bytes. The earlier `44,779,770 / 45,088,768` values are retained only as the **pre-repair candidate-only cost baseline**, not as the rolling-history production result.
+- A later regression smoke after documentation-only changes again returned HTTP `200` for all four Trends routes and hit BigQuery cache, so `total_bytes_processed=0` and `total_bytes_billed=0` on that later run.
 
-Future deployments still require a fresh authenticated smoke before a new revision is described as production-verified.
+Do not use a later documentation-only `main` commit as if it were the runtime implementation revision. The durable runtime evidence for this repair is `8b2096a49f3026fe61fdc2872cada82f9a2d0356`; later documentation commits can move `main` without changing the deployed API code.
 
-See `docs/API.md` for request/response contracts and the acceptance record, and `docs/AGENT_USAGE.md` for agent calling rules.
+Future runtime changes, credential rotations, or upstream permission changes still require a fresh authenticated smoke before the changed runtime is described as production-verified.
+
+See `docs/API.md` for the detailed request/response contract and acceptance record, and `docs/AGENT_USAGE.md` for agent calling rules.
 
 ## Keyword Volume
 
