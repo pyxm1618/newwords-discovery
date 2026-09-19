@@ -2,9 +2,11 @@
 
 Private API layer for AI-driven new-word and SEO discovery workflows.
 
-The repository is API-first. Public Vercel routes live under `api/v1/`; private implementation stays under `api/lib/`.
+This repository is deliberately an **API-layer service**, not a monolithic SEO application. Public Vercel routes live under `api/v1/`; private implementation lives under `api/lib/`. There is no separate `src/` application layer.
 
-## Architecture
+## Architecture contract
+
+Current runtime layout:
 
 ```text
 api/
@@ -12,57 +14,58 @@ api/
 │   ├── keyword-volume.py      # thin public Vercel adapter
 │   └── trends.py              # thin public Vercel adapter
 └── lib/
-    ├── _auth.py               # shared authentication
-    ├── _config.py             # shared environment/config parsing
-    ├── _http.py               # shared HTTP response/header/body helpers
+    ├── _auth.py               # shared Bearer authentication
+    ├── _config.py             # shared env parsing; endpoint-specific settings
+    ├── _http.py               # shared HTTP/JSON helpers
     │
-    ├── _endpoint.py           # keyword-volume orchestration (legacy v1 name)
+    ├── _endpoint.py           # keyword-volume orchestration only (legacy name)
     ├── _keyword_volume.py     # keyword-volume validation/normalization
-    ├── _google_ads.py         # Google Ads upstream transport/client
+    ├── _google_ads.py         # Google Ads client + transport boundary
     │
-    ├── _trends_endpoint.py    # Trends API orchestration
+    ├── _trends_endpoint.py    # Trends orchestration only
     ├── _trends.py             # Trends validation/query/table selection
-    └── _google_bigquery.py    # BigQuery upstream transport/client
+    └── _google_bigquery.py    # BigQuery client + transport boundary
 ```
 
-Architecture rules for additional APIs:
+The architecture rules for every additional API are:
 
-1. Add each public API as a sibling route under `api/v1/`.
-2. Keep the public route thin: HTTP/Vercel adaptation only.
-3. Keep endpoint-specific orchestration in its own private module; do not add a new API's orchestration to an existing API's endpoint module.
-4. Share only genuinely cross-API infrastructure such as authentication, configuration parsing, and generic HTTP helpers.
-5. Keep request validation/query shaping separate from upstream data-source access.
-6. Put external service access behind an injectable transport/client boundary so automated tests remain network-free.
-7. Private helper filenames under `api/lib/` start with `_` so Vercel does not expose them as standalone Functions.
-8. Do not introduce a separate `src/` application layer.
+1. Add the public route as a sibling under `api/v1/`.
+2. Keep `api/v1/<route>.py` thin: Vercel/HTTP adaptation only.
+3. Give each API its own private orchestration module under `api/lib/`; do not add a new API to another API's endpoint module.
+4. Share only genuinely cross-API infrastructure: authentication, configuration parsing, generic HTTP helpers, and other source-neutral utilities.
+5. Keep request validation/query shaping separate from upstream service access.
+6. Put every external service behind an injectable client/transport boundary so tests remain network-free.
+7. Prefix private helper modules with `_` so Vercel does not expose them as standalone Functions.
+8. Do not add a parallel `src/` application layer.
+9. Do not treat `api/lib/_endpoint.py` as a global endpoint registry. Its name is historical; it belongs to Keyword Volume only.
+10. Add or update architecture tests whenever a new API is introduced so cross-API coupling fails CI rather than becoming convention drift.
 
-The original Keyword Volume design is documented in
-[`docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md`](docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md).
-The Trends architecture is documented in
-[`docs/superpowers/specs/2026-09-19-google-trends-bigquery-api-design.md`](docs/superpowers/specs/2026-09-19-google-trends-bigquery-api-design.md).
+The current architecture is enforced by `tests/test_api_layout.py`.
 
-## Production APIs
+## Public APIs
 
-Canonical production domain:
+Canonical domain:
 
 ```text
 https://newwords-discovery.vercel.app
 ```
 
-Endpoints:
+Routes:
 
 ```text
 POST /api/v1/keyword-volume
 POST /api/v1/trends
 ```
 
-Both endpoints use the same private Bearer key:
+Both use the same private Bearer key:
 
 ```http
 Authorization: Bearer <API_KEY>
 ```
 
-See [`docs/API.md`](docs/API.md) for the full contracts and [`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md) for AI/Agent calling rules.
+The canonical domain is the API contract. Do not infer current deployment health or upstream credential readiness from documentation alone; verify Vercel and perform an authenticated smoke request before declaring a route production-verified.
+
+See `docs/API.md` for request/response contracts and `docs/AGENT_USAGE.md` for agent calling rules.
 
 ## Keyword Volume
 
@@ -74,35 +77,10 @@ Default scope:
 - language: `1000` (English)
 - network: `GOOGLE_SEARCH`
 
-## Google Trends BigQuery
-
-`POST /api/v1/trends` exposes Google's public Google Trends BigQuery dataset as a stable private API for discovery workflows.
-
-It supports:
-
-- `kind=rising`: daily Top Rising search terms
-- `kind=top`: daily Top search terms
-- ISO two-letter country selection
-- explicit `refresh_date`
-- up to 25 terms, matching the public dataset's daily Top 25 model
-- BigQuery usage metadata in every successful response:
-  - `total_bytes_processed`
-  - `total_bytes_billed`
-  - `cache_hit`
-
-This endpoint is for discovering current candidate terms. It is not an arbitrary-keyword Google Trends time-series API.
-
-## Secret model
-
-Shared API authentication:
+Server-side configuration:
 
 ```text
 SEO_DATA_API_KEY
-```
-
-Google Ads endpoint:
-
-```text
 GOOGLE_ADS_CLIENT_ID
 GOOGLE_ADS_CLIENT_SECRET
 GOOGLE_ADS_REFRESH_TOKEN
@@ -115,48 +93,68 @@ Optional:
 GOOGLE_ADS_API_VERSION=v24
 ```
 
-BigQuery Trends endpoint:
+## Google Trends BigQuery
+
+`POST /api/v1/trends` exposes Google Trends public BigQuery data for discovery workflows.
+
+Supported capability:
+
+- `kind=rising`: daily Top Rising terms
+- `kind=top`: daily Top terms
+- two-letter country code
+- explicit `refresh_date`
+- `limit` from 1–25
+- BigQuery usage metadata:
+  - `total_bytes_processed`
+  - `total_bytes_billed`
+  - `cache_hit`
+
+This is a daily candidate-discovery API. It is **not** an arbitrary-keyword Google Trends time-series API.
+
+Server-side configuration:
 
 ```text
+SEO_DATA_API_KEY
 GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON
 ```
 
-Optional BigQuery settings:
+Optional:
 
 ```text
-GOOGLE_CLOUD_PROJECT=<query project id>
+GOOGLE_CLOUD_PROJECT
 BIGQUERY_LOCATION=US
 BIGQUERY_MAX_BYTES_BILLED=1000000000
 ```
 
-If `GOOGLE_CLOUD_PROJECT` is omitted, the service-account JSON's `project_id` is used.
-
 `BIGQUERY_MAX_BYTES_BILLED` is a hard per-query billing guard. The default is 1,000,000,000 bytes.
 
-Calling Agents should store the shared API key once in their own secure runtime as:
+## Secret model
+
+Calling agents receive only the service URL and shared API key. They do not receive Google Ads OAuth credentials or the BigQuery service-account JSON.
+
+Recommended caller variable:
 
 ```text
 NEWWORDS_DISCOVERY_API_KEY
 ```
 
-The value must equal Vercel's `SEO_DATA_API_KEY`.
+Its value must equal Vercel's `SEO_DATA_API_KEY`.
 
-## Deploy
+Never commit credentials, API keys, OAuth tokens, or service-account JSON.
 
-1. Import this GitHub repository into Vercel.
-2. Keep the repository root as the Vercel project root.
-3. Add only the environment variables required by the endpoint(s) you want enabled.
-4. Deploy.
-5. Call the canonical production endpoint with `Authorization: Bearer <caller secret>`.
+## Design documents
 
-The Google Ads endpoint does not require BigQuery credentials. The Trends endpoint does not require Google Ads credentials.
+- `docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md`: Keyword Volume design, updated to the final repository layout.
+- `docs/superpowers/plans/2026-09-17-keyword-volume-api.md`: completed implementation record; not a template for new APIs.
+- `docs/superpowers/specs/2026-09-19-google-trends-bigquery-api-design.md`: Trends/BigQuery design and acceptance boundary.
 
 ## Development
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m pytest
-python3 -m compileall api
+python3 -m pytest -q
+python3 -m compileall -q api
+python3 -m json.tool vercel.json >/dev/null
 ```
 
-Automated tests use fakes at external-service boundaries and do not require real Google credentials.
+Tests must not require real Google credentials or network access.

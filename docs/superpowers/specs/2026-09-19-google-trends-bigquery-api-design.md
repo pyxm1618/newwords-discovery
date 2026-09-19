@@ -1,23 +1,18 @@
 # Google Trends BigQuery API Design
 
+## Status
+
+Implemented in the repository.
+
+Repository implementation/build success and production data-path verification are separate states. A production GO for this route requires a READY Vercel deployment plus a real authenticated BigQuery smoke request with valid server-side credentials.
+
 ## Goal
 
-Add Google Trends public BigQuery data as the second production data-source API without changing the repository's API-layer architecture.
+Add Google Trends public BigQuery data as the second production data-source API without breaking the repository's API-layer architecture.
 
 The API is a discovery source for daily Top and Rising terms. It does not emulate the arbitrary-keyword Google Trends web interface.
 
-## Architecture rule
-
-The repository remains a dedicated API layer.
-
-- `api/v1/`: public Vercel HTTP entrypoints only.
-- `api/lib/`: private implementation modules only.
-- Each public API owns its endpoint orchestration; endpoint-specific orchestration must not be added to another API's endpoint module.
-- True cross-API infrastructure may be shared: authentication, configuration parsing, HTTP response/header helpers.
-- Data-source access stays isolated behind a transport/client boundary so tests do not require network access or credentials.
-- Request validation/query shaping stays in the capability module, separate from the upstream transport.
-
-For this API:
+## Architecture
 
 ```text
 api/v1/trends.py
@@ -26,32 +21,46 @@ api/v1/trends.py
 api/lib/_trends_endpoint.py
         │
         ├── api/lib/_trends.py
-        │      request validation + table/query selection
+        │      request validation + fixed table/query selection
         │
         ├── api/lib/_google_bigquery.py
-        │      BigQuery client + injectable transport boundary
+        │      capability client
+        │      + injectable BigQueryTransport
+        │      + GoogleCloudBigQueryTransport
         │
         ├── api/lib/_auth.py
         ├── api/lib/_config.py
         └── api/lib/_http.py
 ```
 
-The first API keeps its existing `api/lib/_endpoint.py` module to avoid an unrelated rename; it remains keyword-volume-only.
+Rules:
+
+- `api/v1/trends.py` contains only Vercel/HTTP adaptation.
+- Trends endpoint orchestration stays in `_trends_endpoint.py`.
+- `_trends.py` owns request validation and query/table selection.
+- `_google_bigquery.py` owns BigQuery access and result normalization at the transport boundary.
+- shared modules remain data-source-neutral.
+- Trends logic must not be added to Keyword Volume's `_endpoint.py`.
+- tests must remain network-free.
+
+These boundaries are enforced by `tests/test_api_layout.py`.
 
 ## Public route
 
-`POST /api/v1/trends`
+```text
+POST /api/v1/trends
+```
 
 Request fields:
 
-- `kind`: `rising` or `top`, default `rising`
-- `country_code`: two-letter ISO country code, default `US`
-- `refresh_date`: `YYYY-MM-DD`, default UTC yesterday
-- `limit`: 1–25, default 25
+- `kind`: `rising` or `top`; default `rising`
+- `country_code`: two-letter ISO code; default `US`
+- `refresh_date`: `YYYY-MM-DD`; default UTC yesterday
+- `limit`: integer 1–25; default 25
 
-## Data-source routing
+## Fixed BigQuery routing
 
-Fixed server-side table mapping:
+Server-side mapping:
 
 - US top: `bigquery-public-data.google_trends.top_terms`
 - US rising: `bigquery-public-data.google_trends.top_rising_terms`
@@ -60,27 +69,60 @@ Fixed server-side table mapping:
 
 User input never becomes a table identifier.
 
-`refresh_date` and international `country_code` are query parameters.
+Parameters:
+
+- `refresh_date`: BigQuery `DATE`
+- non-US `country_code`: BigQuery `STRING`
 
 ## BigQuery transport boundary
 
-`GoogleTrendsBigQueryClient` owns capability-level BigQuery behavior and receives an injectable transport.
+`GoogleTrendsBigQueryClient` receives a `BigQueryTransport`.
 
-Production uses a Google Cloud BigQuery transport. Tests inject a fake transport and assert SQL, parameters, billing cap, and normalized results without credentials or network calls.
+Production implementation:
 
-## Shared infrastructure
+```text
+GoogleTrendsBigQueryClient
+        ↓
+GoogleCloudBigQueryTransport
+        ↓
+google-cloud-bigquery
+```
 
-Shared modules must remain data-source-neutral:
+Tests inject a fake transport and assert:
 
-- `_auth.py`: Bearer authentication
-- `_config.py`: environment parsing into endpoint-specific settings objects
-- `_http.py`: generic JSON response/header/body helpers
+- selected SQL/table
+- query parameters
+- `maximum_bytes_billed`
+- timeout
+- normalized rows
+- usage metadata
 
-They must not contain Trends SQL, Google Ads request logic, or endpoint-specific response contracts.
+No real GCP credentials or network calls are required by tests.
+
+## Configuration
+
+Required:
+
+```text
+SEO_DATA_API_KEY
+GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON
+```
+
+Optional:
+
+```text
+GOOGLE_CLOUD_PROJECT
+BIGQUERY_LOCATION=US
+BIGQUERY_MAX_BYTES_BILLED=1000000000
+```
+
+If `GOOGLE_CLOUD_PROJECT` is absent, the service-account JSON's `project_id` is used.
+
+The service account must be able to create BigQuery query jobs in the selected query project.
 
 ## Billing safety
 
-Every BigQuery query sets `maximum_bytes_billed` from `BIGQUERY_MAX_BYTES_BILLED`.
+Every production query sets `maximum_bytes_billed` from `BIGQUERY_MAX_BYTES_BILLED`.
 
 Successful responses expose:
 
@@ -88,13 +130,46 @@ Successful responses expose:
 - `total_bytes_billed`
 - `cache_hit`
 
-## Testing
+Callers should persist these fields for cost/scan auditing.
 
-Tests are network-free and cover:
+## Error mapping
 
-- request validation and table routing
+- `400`: invalid request
+- `401`: invalid/missing API Bearer token
+- `405`: non-POST
+- `500`: server configuration incomplete
+- `502`: BigQuery/Google upstream failure
+- `504`: timeout
+
+## Automated acceptance
+
+CI must pass:
+
+```bash
+python -m pytest -q
+python -m compileall -q api
+python -m json.tool vercel.json >/dev/null
+```
+
+Coverage includes:
+
+- validation/table routing
 - endpoint HTTP behavior
 - BigQuery transport request shape
-- environment configuration
+- configuration parsing
 - Vercel adapter loading
-- architecture/layout boundaries
+- architecture boundaries
+
+## Production acceptance
+
+Do not declare the Trends route fully production-verified from CI or a successful Vercel build alone.
+
+Production acceptance requires all of the following:
+
+1. current `main` deployment is READY in Vercel;
+2. required BigQuery environment variables are present server-side;
+3. a real authenticated `POST /api/v1/trends` returns actual Google Trends rows;
+4. response includes `usage.total_bytes_processed`, `usage.total_bytes_billed`, and `usage.cache_hit`;
+5. existing `/api/v1/keyword-volume` remains functional after deployment.
+
+Until those checks pass, describe the route as **implemented and CI-validated**, not as fully production-verified.
