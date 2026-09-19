@@ -29,6 +29,8 @@ Current production Trends status: **verified with rolling history**.
 
 Implementation revision `8b2096a49f3026fe61fdc2872cada82f9a2d0356` reached Vercel Production `READY`, then the canonical production endpoint was called with the existing Bearer secret against all four Google Trends table routes for `refresh_date=2026-09-18`.
 
+That SHA is the **runtime implementation revision for the rolling-history repair**. Later documentation-only commits may advance `main`; they must not be substituted for the runtime revision when citing this acceptance evidence.
+
 ### Google Trends four-route smoke
 
 | Case | Results | History points / term | Earliest week | Latest week | Bytes processed | Bytes billed | Cache |
