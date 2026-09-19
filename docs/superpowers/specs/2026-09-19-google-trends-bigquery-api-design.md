@@ -4,167 +4,217 @@
 
 **Implemented and production-verified on 2026-09-19.**
 
-The current production acceptance was performed against Vercel after the `main` deployment reached `READY`. An authenticated request reached the real BigQuery upstream and returned HTTP `200`, real Google Trends rows, and usage metadata.
-
-Verified production revision: `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
-
-Acceptance snapshot:
-
-```text
-kind=rising
-country_code=US
-refresh_date=2026-09-18
-limit=5
-HTTP 200
-source=google_trends_bigquery
-total_bytes_processed=44779770
-total_bytes_billed=45088768
-cache_hit=false
-results_count=5
-```
-
-Repository implementation/build success and production data-path verification remain separate states. Any future deployment or credential/permission change requires a fresh authenticated smoke before that new state is called production-verified.
-
-## Goal
-
-Add Google Trends public BigQuery data as the second production data-source API without breaking the repository's API-layer architecture.
-
-The API is a discovery source for daily Top and Rising terms. It does not emulate the arbitrary-keyword Google Trends web interface.
-
-## Architecture
-
-```text
-api/v1/trends.py
-        │
-        ▼
-api/lib/_trends_endpoint.py
-        │
-        ├── api/lib/_trends.py
-        │      request validation + fixed table/query selection
-        │
-        ├── api/lib/_google_bigquery.py
-        │      capability client
-        │      + injectable BigQueryTransport
-        │      + GoogleCloudBigQueryTransport
-        │
-        ├── api/lib/_auth.py
-        ├── api/lib/_config.py
-        └── api/lib/_http.py
-```
-
-Rules:
-
-- `api/v1/trends.py` contains only Vercel/HTTP adaptation.
-- Trends endpoint orchestration stays in `_trends_endpoint.py`.
-- `_trends.py` owns request validation and query/table selection.
-- `_google_bigquery.py` owns BigQuery access and result normalization at the transport boundary.
-- shared modules remain data-source-neutral.
-- Trends logic must not be added to Keyword Volume's `_endpoint.py`.
-- tests must remain network-free.
-
-These boundaries are enforced by `tests/test_api_layout.py`.
-
-## Public route
+The repair keeps the existing public route:
 
 ```text
 POST /api/v1/trends
 ```
 
-Request fields:
+It does not add a second Trends endpoint, does not implement lifecycle classification, and does not change the Keyword Volume / Google Ads path.
 
-- `kind`: `rising` or `top`; default `rising`
-- `country_code`: two-letter ISO code; default `US`
-- `refresh_date`: `YYYY-MM-DD`; default UTC yesterday
-- `limit`: integer 1–25; default 25
-
-## Fixed BigQuery routing
-
-Server-side mapping:
-
-- US top: `bigquery-public-data.google_trends.top_terms`
-- US rising: `bigquery-public-data.google_trends.top_rising_terms`
-- international top: `bigquery-public-data.google_trends.international_top_terms`
-- international rising: `bigquery-public-data.google_trends.international_top_rising_terms`
-
-User input never becomes a table identifier.
-
-Parameters:
-
-- `refresh_date`: BigQuery `DATE`
-- non-US `country_code`: BigQuery `STRING`
-
-## BigQuery transport boundary
-
-`GoogleTrendsBigQueryClient` receives a `BigQueryTransport`.
-
-Production implementation:
+Verified implementation revision:
 
 ```text
-GoogleTrendsBigQueryClient
-        ↓
-GoogleCloudBigQueryTransport
-        ↓
-google-cloud-bigquery
+8b2096a49f3026fe61fdc2872cada82f9a2d0356
 ```
 
-Tests inject a fake transport and assert:
+That revision reached Vercel Production `READY` and was then exercised against all four real Google Trends BigQuery table routes.
 
-- selected SQL/table
-- query parameters
-- `maximum_bytes_billed`
-- timeout
-- normalized rows
-- usage metadata
+## Problem fixed
 
-No real GCP credentials or network calls are required by tests.
-
-## Configuration
-
-Required:
+The original query reduced the selected partition to:
 
 ```text
-SEO_DATA_API_KEY
-GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON
+term + MIN(rank)
 ```
 
-Optional:
+and the BigQuery normalization layer emitted only:
+
+```json
+{"term": "...", "rank": 1}
+```
+
+Therefore Google-provided `week`, `score`, Rising `percent_gain`, and the rolling historical backfill were discarded by this repository.
+
+The fix exposes those facts without adding a lifecycle opinion such as `true_new`, `seasonal`, `news_spike`, S/A/B, or opportunity score.
+
+## Source tables and verified fields
+
+The implementation uses the four fixed Google public tables:
+
+| Market / kind | Table | Fields relevant to this endpoint |
+| --- | --- | --- |
+| US Top | `bigquery-public-data.google_trends.top_terms` | `refresh_date`, `week`, `dma_name`, `dma_id`, `term`, `score`, `rank` |
+| US Rising | `bigquery-public-data.google_trends.top_rising_terms` | US Top fields + `percent_gain` |
+| International Top | `bigquery-public-data.google_trends.international_top_terms` | `refresh_date`, `country_code`, `country_name`, `region_name`, `region_code`, `week`, `term`, `score`, `rank` |
+| International Rising | `bigquery-public-data.google_trends.international_top_rising_terms` | International Top fields + `percent_gain` |
+
+The fields used by the implementation were validated against the real production BigQuery source by successful queries for US Top, US Rising, GB Top, and GB Rising. A missing or incompatible field would have caused the corresponding query job to fail.
+
+Observed data-grain facts on `refresh_date=2026-09-18`:
+
+- US results contain DMA-level source rows; weekly `region_count` reached roughly 200 for returned terms.
+- GB results contain region-level rows; the sampled latest weeks had `region_count=4`.
+- The selected daily partition contained 261 weekly points per returned US term and 262 per returned GB term.
+- Returned history spans roughly five years: US `2021-09-19 → 2026-09-13`; GB `2021-09-12 → 2026-09-13`.
+- null scores occur naturally and are preserved.
+- Rising returned real `percent_gain`; Top returned `percent_gain=null`.
+- The implementation checks that repeated `rank` values are invariant per selected term, and that Rising `percent_gain` is invariant per selected term. All sampled production terms passed those checks.
+- No sampled production route exposed a usable national/country row; all four route-level metadata values were `mean_across_available_regions`.
+
+## Query design
+
+Every query remains partition-safe:
+
+```sql
+WHERE refresh_date = @refresh_date
+```
+
+International requests additionally use:
+
+```sql
+AND country_code = @country_code
+```
+
+History is not constructed by scanning five years of `refresh_date` partitions. The selected daily partition already contains historical `week` rows.
+
+The SQL shape is:
 
 ```text
-GOOGLE_CLOUD_PROJECT
-BIGQUERY_LOCATION=US
-BIGQUERY_MAX_BYTES_BILLED=1000000000
+base
+  → candidate_terms
+  → weekly_history
+  → final long rows
 ```
 
-If `GOOGLE_CLOUD_PROJECT` is absent, the service-account JSON's `project_id` is used.
+### base
 
-The service account must be able to create BigQuery query jobs in the selected query project. The verified production configuration uses the `BigQuery Job User` role.
+Reads one selected partition and the requested country where applicable.
 
-The service-account JSON is stored only in Vercel as `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON`. A downloaded local JSON file is not a required runtime artifact and should be deleted after production verification. The Google Cloud key represented by that JSON must remain active while Vercel uses it.
+### candidate_terms
+
+Selects the requested Top/Rising terms and applies `LIMIT` here only.
+
+Therefore:
+
+```text
+limit=5
+→ at most 5 candidate terms
+→ each term still receives its complete weekly history
+```
+
+### weekly_history
+
+Groups at:
+
+```text
+term + week
+```
+
+For each weekly score:
+
+1. if an explicit null-region national/country row exists, use that source level;
+2. otherwise calculate `AVG(score)` across available DMA/region rows.
+
+The response makes this explicit through:
+
+```json
+{
+  "history": {
+    "score_aggregation": "mean_across_available_regions"
+  }
+}
+```
+
+The API never silently describes an averaged regional score as an official national score.
+
+`region_count` reports the number of non-null source scores contributing to that weekly point.
+
+## History preservation rules
+
+The endpoint returns the complete weekly curve available in the selected partition and orders it oldest to newest.
+
+It does not:
+
+- convert null to zero;
+- delete real zero rows;
+- delete declining weeks;
+- keep only increasing weeks;
+- keep only non-zero weeks;
+- reduce history to current/max score;
+- run separate 12-month and five-year queries.
+
+Downstream agents can slice the latest ~52 weeks from the same returned history when they need a 12-month view.
+
+## Response contract
+
+Request compatibility remains unchanged:
+
+```json
+{
+  "kind": "rising",
+  "country_code": "US",
+  "refresh_date": "2026-09-18",
+  "limit": 5
+}
+```
+
+Successful responses retain `source`, `query`, `usage`, and `results`, and add history metadata plus per-term history:
+
+```json
+{
+  "source": "google_trends_bigquery",
+  "query": {
+    "kind": "rising",
+    "country_code": "US",
+    "refresh_date": "2026-09-18",
+    "limit": 5
+  },
+  "history": {
+    "window": "rolling_5_years",
+    "granularity": "week",
+    "score_aggregation": "mean_across_available_regions"
+  },
+  "usage": {
+    "total_bytes_processed": 79252802,
+    "total_bytes_billed": 79691776,
+    "cache_hit": false
+  },
+  "results": [
+    {
+      "term": "barcelona vs racing santander",
+      "rank": 1,
+      "percent_gain": 2900,
+      "history": [
+        {
+          "week": "2021-09-19",
+          "score": null,
+          "region_count": 0
+        }
+      ]
+    }
+  ]
+}
+```
+
+The example above is a real dated production acceptance sample, not fixture data or a product guarantee.
 
 ## Billing safety
 
-Every production query sets `maximum_bytes_billed` from `BIGQUERY_MAX_BYTES_BILLED`.
+`BIGQUERY_MAX_BYTES_BILLED` remains enforced by every query.
 
-Successful responses expose:
+For the same `US / rising / 2026-09-18 / limit=5` request:
 
-- `total_bytes_processed`
-- `total_bytes_billed`
-- `cache_hit`
+| Version | Bytes processed | Bytes billed | Cache |
+| --- | ---: | ---: | --- |
+| Previous candidate-only query | 44,779,770 | 45,088,768 | false |
+| Rolling-history query | 79,252,802 | 79,691,776 | false |
 
-Callers should persist these fields for cost/scan auditing.
+The repaired query is about `1.77×` the previous scan, not an orders-of-magnitude five-year partition scan.
 
-## Error mapping
+## Automated verification
 
-- `400`: invalid request
-- `401`: invalid/missing API Bearer token
-- `405`: non-POST
-- `500`: server configuration incomplete
-- `502`: BigQuery/Google upstream failure
-- `504`: timeout
-
-## Automated acceptance
-
-CI must pass:
+The PR CI passed:
 
 ```bash
 python -m pytest -q
@@ -174,25 +224,66 @@ python -m json.tool vercel.json >/dev/null
 
 Coverage includes:
 
-- validation/table routing
-- endpoint HTTP behavior
-- BigQuery transport request shape
-- configuration parsing
-- Vercel adapter loading
-- architecture boundaries
+- all four table routes;
+- one-partition filtering;
+- international country filtering;
+- term limit versus history length;
+- multi-week ordering;
+- null and real zero preservation;
+- pullback preservation;
+- regional aggregation;
+- Rising `percent_gain`;
+- Top `percent_gain=null`;
+- rank/gain consistency checks;
+- BigQuery date/number/null JSON normalization;
+- usage metadata;
+- HTTP/error behavior.
 
 ## Production acceptance
 
-Do not declare the Trends route fully production-verified from CI or a successful Vercel build alone.
+Real authenticated canonical-production smoke, `refresh_date=2026-09-18`:
 
-Acceptance criteria:
+| Case | Results | Points / term | Earliest | Latest | Processed | Billed | Cache |
+| --- | ---: | ---: | --- | --- | ---: | ---: | --- |
+| US Rising, limit 5 | 5 | 261 | 2021-09-19 | 2026-09-13 | 79,252,802 | 79,691,776 | false |
+| US Top, limit 3 | 3 | 261 | 2021-09-19 | 2026-09-13 | 74,652,288 | 75,497,472 | false |
+| GB Rising, limit 3 | 3 | 262 | 2021-09-12 | 2026-09-13 | 440,327,130 | 440,401,920 | false |
+| GB Top, limit 3 | 3 | 262 | 2021-09-12 | 2026-09-13 | 354,454,222 | 355,467,264 | false |
 
-- [x] current `main` deployment reached READY in Vercel;
-- [x] required BigQuery environment variables are present server-side;
-- [x] real authenticated `POST /api/v1/trends` returned HTTP `200` and actual Google Trends rows;
-- [x] response included `usage.total_bytes_processed`, `usage.total_bytes_billed`, and `usage.cache_hit`;
-- [x] existing `/api/v1/keyword-volume` remained functional and returned HTTP `200`.
+All four returned HTTP 200 and `source=google_trends_bigquery`.
 
-**Acceptance completed: 2026-09-19.**
+### Manual real-term check
 
-The verified Trends call processed `44,779,770` bytes and billed `45,088,768` bytes with `cache_hit=false`. The simultaneous Keyword Volume regression call returned live Google Ads data. This closes the original production-verification gap for the current revision.
+A real US Rising result was checked end-to-end:
+
+```text
+refresh_date: 2026-09-18
+term: barcelona vs racing santander
+rank: 1
+percent_gain: 2900
+history points: 261
+earliest: 2021-09-19 → score null
+middle sample: 2024-03-17 → score 46.0
+latest: 2026-09-13 → score 77.66494845360823
+```
+
+This demonstrates that the API is returning historical `week` rows from the same selected partition rather than merely adding an empty `history` field.
+
+## Keyword Volume isolation
+
+The final implementation diff does not modify:
+
+```text
+api/v1/keyword-volume.py
+api/lib/_endpoint.py
+api/lib/_keyword_volume.py
+api/lib/_google_ads.py
+```
+
+No `GOOGLE_ADS_*` environment variable or Google Ads request logic changed.
+
+## Final decision
+
+**GO.**
+
+The existing Trends route now exposes the historical facts required for downstream lifecycle analysis while keeping request compatibility, partition safety, billing caps, usage metadata, and Keyword Volume isolation intact.
