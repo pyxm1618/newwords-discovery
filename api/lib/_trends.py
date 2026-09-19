@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 DEFAULT_KIND = "rising"
 DEFAULT_COUNTRY_CODE = "US"
@@ -83,15 +82,76 @@ def trends_table_name(request: TrendsRequest) -> str:
 def build_trends_query(request: TrendsRequest) -> str:
     table = trends_table_name(request)
     country_filter = ""
+    region_key = "dma_id"
     if request.country_code != "US":
-        country_filter = "\n  AND country_code = @country_code"
+        country_filter = "\n    AND country_code = @country_code"
+        region_key = "region_code"
 
-    return f"""SELECT
-  term,
-  MIN(rank) AS rank
-FROM `{table}`
-WHERE refresh_date = @refresh_date{country_filter}
-GROUP BY term
-ORDER BY rank ASC, term ASC
-LIMIT {request.limit}
+    percent_gain = (
+        "percent_gain AS percent_gain"
+        if request.kind == "rising"
+        else "CAST(NULL AS INT64) AS percent_gain"
+    )
+
+    return f"""WITH base AS (
+  SELECT
+    term,
+    week,
+    score,
+    rank,
+    {percent_gain},
+    {region_key} AS region_key
+  FROM `{table}`
+  WHERE refresh_date = @refresh_date{country_filter}
+),
+candidate_terms AS (
+  SELECT
+    term,
+    MIN(rank) AS rank,
+    MIN(percent_gain) AS percent_gain,
+    COUNT(DISTINCT rank) AS rank_value_count,
+    COUNT(DISTINCT percent_gain) AS percent_gain_value_count
+  FROM base
+  GROUP BY term
+  ORDER BY rank ASC, term ASC
+  LIMIT {request.limit}
+),
+weekly_history AS (
+  SELECT
+    base.term,
+    base.week,
+    CASE
+      WHEN COUNTIF(base.region_key IS NULL) > 0
+        THEN AVG(IF(base.region_key IS NULL, base.score, NULL))
+      ELSE AVG(base.score)
+    END AS score,
+    CASE
+      WHEN COUNTIF(base.region_key IS NULL) > 0
+        THEN 'official_country_row'
+      ELSE 'mean_across_available_regions'
+    END AS score_aggregation,
+    CASE
+      WHEN COUNTIF(base.region_key IS NULL) > 0
+        THEN COUNTIF(base.region_key IS NULL AND base.score IS NOT NULL)
+      ELSE COUNT(base.score)
+    END AS region_count
+  FROM base
+  JOIN candidate_terms AS candidate
+    ON candidate.term = base.term
+  GROUP BY base.term, base.week
+)
+SELECT
+  candidate.term,
+  candidate.rank,
+  candidate.percent_gain,
+  candidate.rank_value_count,
+  candidate.percent_gain_value_count,
+  history.week,
+  history.score,
+  history.score_aggregation,
+  history.region_count
+FROM candidate_terms AS candidate
+JOIN weekly_history AS history
+  ON history.term = candidate.term
+ORDER BY candidate.rank ASC, candidate.term ASC, history.week ASC
 """

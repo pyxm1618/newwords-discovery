@@ -71,7 +71,7 @@ network: GOOGLE_SEARCH
 
 ### Google Trends BigQuery
 
-用途：从 Google Trends 公共 BigQuery 数据中获取每日 Top / Rising 候选词。
+用途：从 Google Trends 公共 BigQuery 数据中获取每日 Top / Rising 候选词，并直接拿到该候选词在同一 `refresh_date` partition 中自带的 rolling weekly history。
 
 ```bash
 curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
@@ -93,10 +93,15 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 
 注意：
 
-- `kind=rising`：用于发现当天快速上升候选词。
-- `kind=top`：用于查看当天 Top 候选词。
+- `kind=rising`：当天快速上升候选词，同时保留 Google 的 `percent_gain`。
+- `kind=top`：当天 Top 候选词；稳定契约下 `percent_gain=null`。
 - `refresh_date` 默认 UTC 昨天。
-- `limit` 为 1–25。
+- `limit` 为 1–25，只限制 term 数量，不截断 history。
+- 每个 result 的 `history` 是按 `week` 升序的完整 rolling weekly backfill；下游需要 12 个月时自行截最近约 52 周。
+- 不要把 null score 补成 0；真实 `score=0`、回落段和后续二次爬升都必须保留。
+- `rank` 是候选元数据，不是历史排名曲线。
+- `score` 是 Google Trends 相对兴趣指数，不是搜索量。
+- 当源数据没有明确 national/country row 时，API 会对可用 DMA/region score 取均值，并通过 `history.score_aggregation` 明确说明。
 - 该 API 不是任意关键词的 Google Trends 曲线查询。
 - BigQuery rank 不是搜索量，也不是 SEO KD。
 
@@ -104,6 +109,11 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 
 ```json
 {
+  "history": {
+    "window": "rolling_5_years",
+    "granularity": "week",
+    "score_aggregation": "mean_across_available_regions"
+  },
   "usage": {
     "total_bytes_processed": 123456,
     "total_bytes_billed": 10000000,
@@ -112,15 +122,16 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 }
 ```
 
-它们用于真实核算 BigQuery 扫描量、计费字节和缓存命中。
+`usage` 用于真实核算 BigQuery 扫描量、计费字节和缓存命中。
 
 ## 找新词时的调用顺序
 
-1. 用 `/api/v1/trends` 的 `rising` 获取每日候选词。
-2. 按业务规则排除品牌词、事件噪声和明显无关词。
-3. 把保留候选批量发送给 `/api/v1/keyword-volume` 获取 Google Ads 搜索量。
-4. KD、allintitle 等指标继续调用各自数据源；不要拿 Ads competition 或 BigQuery rank 代替。
-5. 保存 Trends 的 `refresh_date` 与 `usage`，保证结果可追溯。
+1. 用 `/api/v1/trends` 的 `rising` 获取每日候选词和完整 rolling weekly history。
+2. 下游 AI 先利用 history 判断过去长期低基数、首次出现、连续爬升、单周尖峰、回落后二次爬升、历史重复/季节性等生命周期事实；这些判断不在 API 内硬编码。
+3. 再按业务规则排除品牌词、事件噪声和明显无关词。
+4. 把保留候选批量发送给 `/api/v1/keyword-volume` 获取 Google Ads 搜索量。
+5. KD、allintitle 等指标继续调用各自数据源；不要拿 Ads competition 或 BigQuery rank 代替。
+6. 保存 Trends 的 `refresh_date`、history metadata 与 `usage`，保证结果可追溯。
 
 ## 错误与验证规则
 

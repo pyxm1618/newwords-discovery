@@ -71,6 +71,11 @@ def handle_trends(
                 "refresh_date": request.refresh_date,
                 "limit": request.limit,
             },
+            "history": {
+                "window": "rolling_5_years",
+                "granularity": "week",
+                "score_aggregation": upstream["history"]["score_aggregation"],
+            },
             "usage": upstream["usage"],
             "results": upstream["results"],
         },

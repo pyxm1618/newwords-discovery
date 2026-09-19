@@ -113,17 +113,20 @@ GOOGLE_ADS_API_VERSION=v24
 
 Supported capability:
 
-- `kind=rising`: daily Top Rising terms
-- `kind=top`: daily Top terms
+- `kind=rising`: daily Top Rising candidates with Google `percent_gain`
+- `kind=top`: daily Top candidates
 - two-letter country code
 - explicit `refresh_date`
-- `limit` from 1–25
+- `limit` from 1–25, applied to candidate terms only
+- each candidate includes the rolling weekly historical backfill stored in that same `refresh_date` partition
+- history is ordered oldest → newest and preserves null, real zero, pullback, and rebound weeks
+- country-level weekly score semantics are disclosed through `history.score_aggregation`
 - BigQuery usage metadata:
   - `total_bytes_processed`
   - `total_bytes_billed`
   - `cache_hit`
 
-This is a daily candidate-discovery API. It is **not** an arbitrary-keyword Google Trends time-series API.
+This is a daily candidate-discovery API with lifecycle evidence. It is **not** an arbitrary-keyword Google Trends query API, and it does not classify terms as new/seasonal/news/opportunities.
 
 Server-side configuration:
 

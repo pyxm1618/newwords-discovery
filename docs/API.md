@@ -161,9 +161,9 @@ GOOGLE_ADS_API_VERSION=v24
 
 ## `POST /api/v1/trends`
 
-Returns daily Top or Rising terms from Google's public Google Trends dataset in BigQuery.
+Returns daily Top or Rising candidate terms from Google's public Google Trends dataset in BigQuery, together with the rolling weekly historical backfill that Google stores in the same `refresh_date` partition.
 
-This route is for candidate discovery. It does not accept an arbitrary keyword and return a Google Trends time-series curve.
+This route is for candidate discovery and lifecycle evidence. It does not accept an arbitrary keyword.
 
 ### Request
 
@@ -193,13 +193,31 @@ Rules:
 - `country_code`: two-letter ISO code; default `US`.
 - `refresh_date`: `YYYY-MM-DD`; default UTC yesterday.
 - `limit`: integer 1–25; default 25.
+- `limit` restricts candidate terms only; it never truncates a term's weekly history.
 - US requests use the fixed US table set.
 - non-US requests use the fixed international table set and parameterize `country_code`.
-- table identifiers come only from server-side constants; user input is never interpolated as a table name.
-- `refresh_date` and international `country_code` are BigQuery query parameters.
+- every query reads exactly one `refresh_date` partition. It does not scan older partitions to construct history.
+- Google already stores the rolling historical weekly rows inside that selected partition.
 - every query is constrained by `BIGQUERY_MAX_BYTES_BILLED`.
 
-The query groups rows by `term` for the selected `refresh_date` and returns the daily term/rank candidate list.
+### History semantics
+
+For each candidate term, `history` is ordered by `week` ascending and retains the complete weekly rows made available by Google for that selected partition.
+
+The API does not:
+
+- convert missing/null scores to zero;
+- remove real `score=0` rows;
+- remove pullback weeks;
+- keep only rising weeks;
+- collapse the history to a current/maximum score.
+
+Google's source data is geographic: US rows are DMA-grained and international rows are region-grained. For a given `term + week`:
+
+1. if the source provides an explicit null-region national/country row, that row is preferred;
+2. otherwise the API returns `AVG(score)` across available region/DMA scores and labels the response `score_aggregation=mean_across_available_regions`.
+
+`region_count` is the count of non-null source scores contributing to that weekly score. It is metadata, not a search-volume metric.
 
 ### Success response
 
@@ -212,6 +230,11 @@ The query groups rows by `term` for the selected `refresh_date` and returns the 
     "refresh_date": "2026-09-18",
     "limit": 25
   },
+  "history": {
+    "window": "rolling_5_years",
+    "granularity": "week",
+    "score_aggregation": "mean_across_available_regions"
+  },
   "usage": {
     "total_bytes_processed": 123456,
     "total_bytes_billed": 10000000,
@@ -220,13 +243,32 @@ The query groups rows by `term` for the selected `refresh_date` and returns the 
   "results": [
     {
       "term": "example rising term",
-      "rank": 1
+      "rank": 1,
+      "percent_gain": 1250,
+      "history": [
+        {
+          "week": "2021-09-19",
+          "score": 0,
+          "region_count": 10
+        },
+        {
+          "week": "2021-09-26",
+          "score": 18.5,
+          "region_count": 10
+        }
+      ]
     }
   ]
 }
 ```
 
-`usage` is part of the contract so callers can record actual BigQuery scan/billing behavior.
+The numeric values above illustrate response shape only. Production acceptance records use actual observed values.
+
+For `kind=rising`, `percent_gain` is Google's source field. For `kind=top`, `percent_gain` is `null` so the response shape remains stable.
+
+`rank` is candidate metadata, not a historical trend value; it is not repeated inside each weekly point.
+
+`usage` remains part of the contract so callers can record actual BigQuery scan/billing behavior.
 
 ### Server configuration
 
@@ -249,15 +291,13 @@ BIGQUERY_MAX_BYTES_BILLED=1000000000
 
 If `GOOGLE_CLOUD_PROJECT` is omitted, the service-account JSON's `project_id` is used.
 
-The service account must be permitted to create BigQuery query jobs in the query project. The production service account uses the `BigQuery Job User` role for this capability. The Google Trends source tables are public, but the query job still needs a project and valid credentials.
+The service account must be permitted to create BigQuery query jobs in the query project. The Google Trends source tables are public, but the query job still needs a project and valid credentials.
 
 Credential handling:
 
 - store the complete JSON only in Vercel as `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON`;
 - do not commit or paste the service-account JSON into documentation, source, issues, prompts, or chat;
-- delete the downloaded local JSON after production verification;
-- keep the corresponding Google Cloud key active while Vercel uses it;
-- restoring an organization policy that blocks *new* service-account key creation does not revoke an existing key.
+- keep the corresponding Google Cloud key active while Vercel uses it.
 
 ### curl
 
