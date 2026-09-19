@@ -17,3 +17,85 @@ jobs:
       - run: python -m pytest -q
       - run: python -m compileall -q api
       - run: python -m json.tool vercel.json >/dev/null
+
+      - name: Temporary production POST probe
+        if: github.head_ref == 'chore/prod-api-smoke'
+        shell: bash
+        env:
+          PROD_BASE_URL: https://newwords-discovery.vercel.app
+          NEWWORDS_DISCOVERY_API_KEY: ${{ secrets.NEWWORDS_DISCOVERY_API_KEY }}
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          trends_code="$(curl -sS -o /tmp/trends-unauth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/trends" \
+            -H 'Content-Type: application/json' \
+            --data '{"kind":"rising","country_code":"US","limit":5}')"
+          echo "trends_unauth_status=$trends_code"
+          python - <<'PY'
+          import json
+          data = json.load(open("/tmp/trends-unauth.json"))
+          print("trends_unauth_body=" + json.dumps(data, ensure_ascii=False))
+          PY
+
+          volume_code="$(curl -sS -o /tmp/volume-unauth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/keyword-volume" \
+            -H 'Content-Type: application/json' \
+            --data '{"keywords":["i ching online"]}')"
+          echo "keyword_volume_unauth_status=$volume_code"
+          python - <<'PY'
+          import json
+          data = json.load(open("/tmp/volume-unauth.json"))
+          print("keyword_volume_unauth_body=" + json.dumps(data, ensure_ascii=False))
+          PY
+
+          KEY="$NEWWORDS_DISCOVERY_API_KEY"
+          if [ -z "$KEY" ]; then KEY="$SEO_DATA_API_KEY"; fi
+
+          if [ -z "$KEY" ]; then
+            echo "caller_secret_present=no"
+            echo "authenticated_smoke=skipped"
+            exit 0
+          fi
+
+          echo "::add-mask::$KEY"
+          echo "caller_secret_present=yes"
+
+          trends_auth_code="$(curl -sS -o /tmp/trends-auth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/trends" \
+            -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"kind":"rising","country_code":"US","limit":5}')"
+          echo "trends_auth_status=$trends_auth_code"
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("/tmp/trends-auth.json"))
+          print("trends_auth_body=" + json.dumps(data, ensure_ascii=False))
+          if "error" in data:
+              sys.exit(2)
+          assert data.get("source") == "google_trends_bigquery"
+          assert isinstance(data.get("results"), list)
+          usage = data.get("usage")
+          assert isinstance(usage, dict)
+          for key in ("total_bytes_processed", "total_bytes_billed", "cache_hit"):
+              assert key in usage
+          PY
+          test "$trends_auth_code" = "200"
+
+          volume_auth_code="$(curl -sS -o /tmp/volume-auth.json -w '%{http_code}' \
+            -X POST "$PROD_BASE_URL/api/v1/keyword-volume" \
+            -H "Authorization: Bearer $KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"keywords":["i ching online"]}')"
+          echo "keyword_volume_auth_status=$volume_auth_code"
+          python - <<'PY'
+          import json, sys
+          data = json.load(open("/tmp/volume-auth.json"))
+          print("keyword_volume_auth_body=" + json.dumps(data, ensure_ascii=False))
+          if "error" in data:
+              sys.exit(3)
+          assert data.get("source") == "google_ads"
+          assert isinstance(data.get("results"), list)
+          PY
+          test "$volume_auth_code" = "200"
