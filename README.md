@@ -2,24 +2,44 @@
 
 Private API layer for AI-driven new-word and SEO discovery workflows.
 
-The repository is API-first. Public Vercel endpoints and their shared runtime implementation live under `api/`, so multiple SEO data sources can share one authentication layer without mixing credentials or business logic.
+The repository is API-first. Public Vercel routes live under `api/v1/`; private implementation stays under `api/lib/`.
 
-## Repository layout
+## Architecture
 
 ```text
 api/
 ├── v1/
-│   ├── keyword-volume.py      # Google Ads historical search volume
-│   └── trends.py              # Google Trends public dataset via BigQuery
+│   ├── keyword-volume.py      # thin public Vercel adapter
+│   └── trends.py              # thin public Vercel adapter
 └── lib/
-    ├── _auth.py
-    ├── _config.py
-    ├── _endpoint.py
-    ├── _google_ads.py
-    ├── _google_bigquery.py
-    ├── _keyword_volume.py
-    └── _trends.py
+    ├── _auth.py               # shared authentication
+    ├── _config.py             # shared environment/config parsing
+    ├── _http.py               # shared HTTP response/header/body helpers
+    │
+    ├── _endpoint.py           # keyword-volume orchestration (legacy v1 name)
+    ├── _keyword_volume.py     # keyword-volume validation/normalization
+    ├── _google_ads.py         # Google Ads upstream transport/client
+    │
+    ├── _trends_endpoint.py    # Trends API orchestration
+    ├── _trends.py             # Trends validation/query/table selection
+    └── _google_bigquery.py    # BigQuery upstream transport/client
 ```
+
+Architecture rules for additional APIs:
+
+1. Add each public API as a sibling route under `api/v1/`.
+2. Keep the public route thin: HTTP/Vercel adaptation only.
+3. Keep endpoint-specific orchestration in its own private module; do not add a new API's orchestration to an existing API's endpoint module.
+4. Share only genuinely cross-API infrastructure such as authentication, configuration parsing, and generic HTTP helpers.
+5. Keep request validation/query shaping separate from upstream data-source access.
+6. Put external service access behind an injectable transport/client boundary so automated tests remain network-free.
+7. Private helper filenames under `api/lib/` start with `_` so Vercel does not expose them as standalone Functions.
+8. Do not introduce a separate `src/` application layer.
+
+The original Keyword Volume design is documented in
+[`docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md`](docs/superpowers/specs/2026-09-17-keyword-volume-api-design.md).
+The Trends architecture is documented in
+[`docs/superpowers/specs/2026-09-19-google-trends-bigquery-api-design.md`](docs/superpowers/specs/2026-09-19-google-trends-bigquery-api-design.md).
 
 ## Production APIs
 
@@ -72,8 +92,6 @@ It supports:
 
 This endpoint is for discovering current candidate terms. It is not an arbitrary-keyword Google Trends time-series API.
 
-The public dataset uses separate US and international tables; the service routes `country_code=US` to the US tables and other country codes to the international tables.
-
 ## Secret model
 
 Shared API authentication:
@@ -115,8 +133,6 @@ If `GOOGLE_CLOUD_PROJECT` is omitted, the service-account JSON's `project_id` is
 
 `BIGQUERY_MAX_BYTES_BILLED` is a hard per-query billing guard. The default is 1,000,000,000 bytes.
 
-The service account must be able to create BigQuery query jobs in the query project. Do not commit the service-account JSON or any API key to GitHub.
-
 Calling Agents should store the shared API key once in their own secure runtime as:
 
 ```text
@@ -143,4 +159,4 @@ python3 -m pytest
 python3 -m compileall api
 ```
 
-Automated tests use fakes at the external-service boundary and do not require real Google credentials.
+Automated tests use fakes at external-service boundaries and do not require real Google credentials.

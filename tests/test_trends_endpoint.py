@@ -1,8 +1,8 @@
 import json
 
 from api.lib._config import BigQuerySettings, ConfigError
-from api.lib._endpoint import handle_trends
 from api.lib._google_bigquery import BigQueryServiceError, BigQueryTimeout
+from api.lib._trends_endpoint import handle_trends
 
 
 def settings():
