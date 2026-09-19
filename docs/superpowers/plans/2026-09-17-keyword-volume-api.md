@@ -1,6 +1,8 @@
 # Keyword Volume API Implementation Record
 
-**Status:** Completed.
+**Status:** Completed and production-verified on 2026-09-19.
+
+Production regression smoke: authenticated `POST /api/v1/keyword-volume` returned HTTP `200` with live `google_ads` data on production revision `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
 
 This file is retained as the implementation record for the first `newwords-discovery` API. It is **not** the template for future APIs.
 
