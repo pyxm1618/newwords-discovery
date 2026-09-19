@@ -63,9 +63,23 @@ Both use the same private Bearer key:
 Authorization: Bearer <API_KEY>
 ```
 
-The canonical domain is the API contract. Do not infer current deployment health or upstream credential readiness from documentation alone; verify Vercel and perform an authenticated smoke request before declaring a route production-verified.
+The canonical domain is the API contract.
 
-See `docs/API.md` for request/response contracts and `docs/AGENT_USAGE.md` for agent calling rules.
+## Production status
+
+**Production-verified on 2026-09-19.**
+
+Both public routes were authenticated-smoke-tested against the canonical production domain after the current `main` deployment reached Vercel `READY`:
+
+- `POST /api/v1/trends` → HTTP `200`, `source=google_trends_bigquery`, with real Google Trends BigQuery rows and usage metadata.
+- `POST /api/v1/keyword-volume` → HTTP `200`, `source=google_ads`, with real Google Ads historical metrics.
+- The verified production code revision was `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
+- Trends acceptance request: `kind=rising`, `country_code=US`, `refresh_date=2026-09-18`, `limit=5`.
+- That Trends request reported `44,779,770` bytes processed, `45,088,768` bytes billed, and `cache_hit=false`.
+
+Future deployments still require a fresh authenticated smoke before a new revision is described as production-verified.
+
+See `docs/API.md` for request/response contracts and the acceptance record, and `docs/AGENT_USAGE.md` for agent calling rules.
 
 ## Keyword Volume
 
@@ -141,6 +155,14 @@ NEWWORDS_DISCOVERY_API_KEY
 Its value must equal Vercel's `SEO_DATA_API_KEY`.
 
 Never commit credentials, API keys, OAuth tokens, or service-account JSON.
+
+For the BigQuery service account:
+
+- keep the complete service-account JSON only in the server-side Vercel secret `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON`;
+- after a successful production smoke, the downloaded local JSON file should be deleted;
+- do not delete the corresponding Google Cloud service-account key while Vercel still uses that credential;
+- the runtime identity needs permission to create BigQuery jobs in the query project (currently satisfied with `BigQuery Job User`);
+- if service-account key creation was temporarily enabled by overriding an organization policy, restore the inherited restriction after the required key has been created. Restoring the creation restriction does not revoke an already-created key.
 
 ## Design documents
 
