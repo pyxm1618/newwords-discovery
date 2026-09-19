@@ -2,9 +2,28 @@
 
 ## Status
 
-Implemented in the repository.
+**Implemented and production-verified on 2026-09-19.**
 
-Repository implementation/build success and production data-path verification are separate states. A production GO for this route requires a READY Vercel deployment plus a real authenticated BigQuery smoke request with valid server-side credentials.
+The current production acceptance was performed against Vercel after the `main` deployment reached `READY`. An authenticated request reached the real BigQuery upstream and returned HTTP `200`, real Google Trends rows, and usage metadata.
+
+Verified production revision: `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c`.
+
+Acceptance snapshot:
+
+```text
+kind=rising
+country_code=US
+refresh_date=2026-09-18
+limit=5
+HTTP 200
+source=google_trends_bigquery
+total_bytes_processed=44779770
+total_bytes_billed=45088768
+cache_hit=false
+results_count=5
+```
+
+Repository implementation/build success and production data-path verification remain separate states. Any future deployment or credential/permission change requires a fresh authenticated smoke before that new state is called production-verified.
 
 ## Goal
 
@@ -118,7 +137,9 @@ BIGQUERY_MAX_BYTES_BILLED=1000000000
 
 If `GOOGLE_CLOUD_PROJECT` is absent, the service-account JSON's `project_id` is used.
 
-The service account must be able to create BigQuery query jobs in the selected query project.
+The service account must be able to create BigQuery query jobs in the selected query project. The verified production configuration uses the `BigQuery Job User` role.
+
+The service-account JSON is stored only in Vercel as `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON`. A downloaded local JSON file is not a required runtime artifact and should be deleted after production verification. The Google Cloud key represented by that JSON must remain active while Vercel uses it.
 
 ## Billing safety
 
@@ -164,12 +185,14 @@ Coverage includes:
 
 Do not declare the Trends route fully production-verified from CI or a successful Vercel build alone.
 
-Production acceptance requires all of the following:
+Acceptance criteria:
 
-1. current `main` deployment is READY in Vercel;
-2. required BigQuery environment variables are present server-side;
-3. a real authenticated `POST /api/v1/trends` returns actual Google Trends rows;
-4. response includes `usage.total_bytes_processed`, `usage.total_bytes_billed`, and `usage.cache_hit`;
-5. existing `/api/v1/keyword-volume` remains functional after deployment.
+- [x] current `main` deployment reached READY in Vercel;
+- [x] required BigQuery environment variables are present server-side;
+- [x] real authenticated `POST /api/v1/trends` returned HTTP `200` and actual Google Trends rows;
+- [x] response included `usage.total_bytes_processed`, `usage.total_bytes_billed`, and `usage.cache_hit`;
+- [x] existing `/api/v1/keyword-volume` remained functional and returned HTTP `200`.
 
-Until those checks pass, describe the route as **implemented and CI-validated**, not as fully production-verified.
+**Acceptance completed: 2026-09-19.**
+
+The verified Trends call processed `44,779,770` bytes and billed `45,088,768` bytes with `cache_hit=false`. The simultaneous Keyword Volume regression call returned live Google Ads data. This closes the original production-verification gap for the current revision.
