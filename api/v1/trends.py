@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 
-from api.lib._endpoint import handle_trends
+from api.lib._trends_endpoint import handle_trends
 
 
 class handler(BaseHTTPRequestHandler):
