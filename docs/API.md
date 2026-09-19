@@ -23,6 +23,59 @@ Calling agents should store the same value as `NEWWORDS_DISCOVERY_API_KEY`.
 
 The contracts below describe implemented routes. A route is only production-verified after its current Vercel deployment is READY and an authenticated smoke request reaches the real upstream successfully. Build success alone does not prove upstream credentials or permissions.
 
+## Production acceptance record — 2026-09-19
+
+Current production status: **verified**.
+
+The production deployment for `main` revision `c2911ffbb52a6d28b2c31db7e57ec8ac1fad537c` reached Vercel `READY`, then both upstream paths were called with a valid Bearer token.
+
+### Trends smoke
+
+Request:
+
+```json
+{
+  "kind": "rising",
+  "country_code": "US",
+  "refresh_date": "2026-09-18",
+  "limit": 5
+}
+```
+
+Observed production result:
+
+```text
+HTTP 200
+source = google_trends_bigquery
+total_bytes_processed = 44779770
+total_bytes_billed = 45088768
+cache_hit = false
+results_count = 5
+```
+
+The response contained real Google Trends rows, proving the full path:
+
+```text
+Vercel → service-account credential → Google authentication
+→ BigQuery query job → public Google Trends dataset → API response
+```
+
+### Keyword Volume regression smoke
+
+Observed production result:
+
+```text
+HTTP 200
+source = google_ads
+keyword = i ching online
+avg_monthly_searches = 22200
+competition = LOW
+```
+
+These values are a dated acceptance snapshot, not hard-coded product guarantees. Upstream data can change on later calls.
+
+A future deployment or credential rotation requires a new authenticated smoke before the new state is called production-verified.
+
 ---
 
 ## `POST /api/v1/keyword-volume`
@@ -196,7 +249,15 @@ BIGQUERY_MAX_BYTES_BILLED=1000000000
 
 If `GOOGLE_CLOUD_PROJECT` is omitted, the service-account JSON's `project_id` is used.
 
-The service account must be permitted to create BigQuery query jobs in the query project. The Google Trends source tables are public, but the query job still needs a project and valid credentials.
+The service account must be permitted to create BigQuery query jobs in the query project. The production service account uses the `BigQuery Job User` role for this capability. The Google Trends source tables are public, but the query job still needs a project and valid credentials.
+
+Credential handling:
+
+- store the complete JSON only in Vercel as `GOOGLE_CLOUD_SERVICE_ACCOUNT_JSON`;
+- do not commit or paste the service-account JSON into documentation, source, issues, prompts, or chat;
+- delete the downloaded local JSON after production verification;
+- keep the corresponding Google Cloud key active while Vercel uses it;
+- restoring an organization policy that blocks *new* service-account key creation does not revoke an existing key.
 
 ### curl
 
