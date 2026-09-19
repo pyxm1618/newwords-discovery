@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from ._config import BigQuerySettings
@@ -48,7 +49,11 @@ class GoogleTrendsBigQueryClient:
     def fetch_terms(self, request: TrendsRequest) -> dict[str, Any]:
         bigquery = self._bigquery
         parameters = [
-            bigquery.ScalarQueryParameter("refresh_date", "DATE", request.refresh_date),
+            bigquery.ScalarQueryParameter(
+                "refresh_date",
+                "DATE",
+                date.fromisoformat(request.refresh_date),
+            ),
         ]
         if request.country_code != "US":
             parameters.append(
