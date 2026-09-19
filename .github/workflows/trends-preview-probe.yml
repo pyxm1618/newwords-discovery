@@ -1,0 +1,100 @@
+name: trends-preview-probe
+
+on:
+  push:
+    branches:
+      - fix/trends-history-backfill-20260919
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Probe all four Google Trends table routes
+        env:
+          API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          key = os.environ.get("API_KEY", "")
+          if not key:
+              raise SystemExit("SEO_DATA_API_KEY repository secret is missing")
+
+          base_url = "https://newwords-discovery-18kz6uqng-pyxm1618s-projects.vercel.app/api/v1/trends"
+          cases = [
+              ("us-rising", "rising", "US"),
+              ("us-top", "top", "US"),
+              ("gb-rising", "rising", "GB"),
+              ("gb-top", "top", "GB"),
+          ]
+
+          failed = False
+          for label, kind, country in cases:
+              body = json.dumps(
+                  {
+                      "kind": kind,
+                      "country_code": country,
+                      "refresh_date": "2026-09-18",
+                      "limit": 3,
+                  }
+              ).encode()
+              request = urllib.request.Request(
+                  base_url,
+                  data=body,
+                  headers={
+                      "Authorization": f"Bearer {key}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+                      results = payload.get("results", [])
+                      print(
+                          label,
+                          "HTTP",
+                          response.status,
+                          "source",
+                          payload.get("source"),
+                          "results",
+                          len(results),
+                          "usage",
+                          json.dumps(payload.get("usage"), sort_keys=True),
+                          "history_meta",
+                          json.dumps(payload.get("history"), sort_keys=True),
+                      )
+                      for item in results:
+                          history = item.get("history", [])
+                          print(
+                              label,
+                              "term",
+                              json.dumps(item.get("term"), ensure_ascii=False),
+                              "rank",
+                              item.get("rank"),
+                              "percent_gain",
+                              item.get("percent_gain"),
+                              "history_points",
+                              len(history),
+                              "earliest",
+                              history[0].get("week") if history else None,
+                              "latest",
+                              history[-1].get("week") if history else None,
+                          )
+              except urllib.error.HTTPError as exc:
+                  failed = True
+                  error_body = exc.read().decode("utf-8", errors="replace")
+                  print(label, "HTTP", exc.code, error_body[:1000])
+              except Exception as exc:
+                  failed = True
+                  print(label, "ERROR", type(exc).__name__, str(exc))
+
+          if failed:
+              raise SystemExit(1)
+          PY
