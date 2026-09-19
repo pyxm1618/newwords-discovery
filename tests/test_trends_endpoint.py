@@ -24,6 +24,9 @@ def settings():
 class FakeClient:
     def __init__(self, result=None, error=None):
         self.result = result or {
+            "history": {
+                "score_aggregation": "mean_across_available_regions",
+            },
             "results": [],
             "usage": {
                 "total_bytes_processed": 0,
@@ -101,12 +104,42 @@ def test_upstream_error_and_timeout_map_to_502_and_504():
     assert call(client=FakeClient(error=BigQueryTimeout("timeout")))[0] == 504
 
 
-def test_success_returns_terms_and_usage_metrics():
+def test_success_returns_history_contract_terms_and_usage_metrics():
     client = FakeClient(
         result={
+            "history": {
+                "score_aggregation": "mean_across_available_regions",
+            },
             "results": [
-                {"term": "example rising term", "rank": 1},
-                {"term": "another term", "rank": 2},
+                {
+                    "term": "example rising term",
+                    "rank": 1,
+                    "percent_gain": 1250,
+                    "history": [
+                        {
+                            "week": "2021-09-19",
+                            "score": 0.0,
+                            "region_count": 10,
+                        },
+                        {
+                            "week": "2021-09-26",
+                            "score": 22.5,
+                            "region_count": 10,
+                        },
+                    ],
+                },
+                {
+                    "term": "another term",
+                    "rank": 2,
+                    "percent_gain": 800,
+                    "history": [
+                        {
+                            "week": "2021-09-19",
+                            "score": None,
+                            "region_count": 0,
+                        }
+                    ],
+                },
             ],
             "usage": {
                 "total_bytes_processed": 123456,
@@ -127,6 +160,15 @@ def test_success_returns_terms_and_usage_metrics():
         "refresh_date": "2026-09-18",
         "limit": 25,
     }
-    assert body["results"][0] == {"term": "example rising term", "rank": 1}
+    assert body["history"] == {
+        "window": "rolling_5_years",
+        "granularity": "week",
+        "score_aggregation": "mean_across_available_regions",
+    }
+    assert body["results"][0]["term"] == "example rising term"
+    assert body["results"][0]["rank"] == 1
+    assert body["results"][0]["percent_gain"] == 1250
+    assert len(body["results"][0]["history"]) == 2
+    assert body["results"][1]["history"][0]["score"] is None
     assert body["usage"]["total_bytes_processed"] == 123456
     assert body["usage"]["total_bytes_billed"] == 10_000_000
