@@ -1,0 +1,43 @@
+name: temp-global-month-extra-volume
+
+on:
+  pull_request:
+
+jobs:
+  run:
+    if: github.head_ref == 'chore/global-month-extra-volume-20260920'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check additional opportunity volumes
+        env:
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$SEO_DATA_API_KEY"
+          call () {
+            label="$1"; geo="$2"; kws="$3"
+            status="$(curl -sS -o "/tmp/$label.json" -w '%{http_code}' \
+              -X POST 'https://newwords-discovery.vercel.app/api/v1/keyword-volume' \
+              -H "Authorization: Bearer $SEO_DATA_API_KEY" \
+              -H 'Content-Type: application/json' \
+              --data "{\"keywords\":$kws,\"geo_target_constant\":\"$geo\",\"language_constant\":\"1000\",\"network\":\"GOOGLE_SEARCH\"}")"
+            echo "=== $label geo=$geo status=$status ==="
+            test "$status" = "200"
+            python - "$label" <<'PY'
+          import json,sys
+          d=json.load(open("/tmp/"+sys.argv[1]+".json"))
+          for r in d.get("results",[]):
+              print(json.dumps({
+                "keyword":r.get("keyword"),
+                "avg_monthly_searches":r.get("avg_monthly_searches"),
+                "competition":r.get("competition"),
+                "competition_index":r.get("competition_index"),
+                "monthly_search_volumes":r.get("monthly_search_volumes")
+              },ensure_ascii=False))
+          PY
+          }
+          call gb 2826 '["pension credit case review campaign","dwp eligibility verification measure banks","iht400 form rules and fines","hmrc tax calculation software error","two pension payments september 2026","qualifying week winter fuel allowance"]'
+          call za 2710 '["fuel recovery south africa august","south africa fuel price inflation","spaza shop card surcharge south africa","south africa car licence renewal","sassa whatsapp verification self service","sars high income tax penalties","dot proposed driving licence changes","south africa vehicle licence tax"]'
+          call ca 2124 '["cra repeated failure penalty","repeated late tax return penalties","service canada benefit payments september 2026","cgeb vs gst hst credit amount"]'
+          call au 2036 '["ato capital gains tax property audit","jobseeker payment changes september","centrelink payment increase september"]'
