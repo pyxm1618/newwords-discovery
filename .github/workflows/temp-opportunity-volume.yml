@@ -1,0 +1,50 @@
+name: temp-opportunity-volume-check
+
+on:
+  pull_request:
+
+jobs:
+  run:
+    if: github.head_ref == 'chore/global-month-skill-run-20260920'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check retained/watch candidate volumes
+        shell: bash
+        env:
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SEO_DATA_API_KEY"
+          echo "::add-mask::$SEO_DATA_API_KEY"
+
+          call_volume () {
+            local label="$1"
+            local geo="$2"
+            local keywords="$3"
+            code="$(curl -sS -o "/tmp/$label.json" -w '%{http_code}' \
+              -X POST 'https://newwords-discovery.vercel.app/api/v1/keyword-volume' \
+              -H "Authorization: Bearer $SEO_DATA_API_KEY" \
+              -H 'Content-Type: application/json' \
+              --data "{\"keywords\":$keywords,\"geo_target_constant\":\"$geo\",\"language_constant\":\"1000\",\"network\":\"GOOGLE_SEARCH\"}")"
+            echo "=== $label geo=$geo status=$code ==="
+            test "$code" = "200"
+            python - "$label" <<'PY'
+          import json,sys
+          label=sys.argv[1]
+          d=json.load(open(f"/tmp/{label}.json"))
+          print("query="+json.dumps(d.get("query"),ensure_ascii=False))
+          for r in d.get("results",[]):
+              print(json.dumps({
+                "keyword":r.get("keyword"),
+                "avg_monthly_searches":r.get("avg_monthly_searches"),
+                "competition":r.get("competition"),
+                "competition_index":r.get("competition_index"),
+                "monthly_search_volumes":r.get("monthly_search_volumes"),
+              },ensure_ascii=False))
+          PY
+          }
+
+          call_volume gb 2826 '["dwp bank account monitoring rules","motor finance compensation","winter fuel payment eligibility"]'
+          call_volume ca 2124 '["canada work permit study exemption","canada disability benefit"]'
+          call_volume za 2710 '["sassa grant review","sassa grant review ai data matching","smart id bank branches","sars tax penalties"]'
+          call_volume au 2036 '["chademo australia"]'
