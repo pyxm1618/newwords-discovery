@@ -1,0 +1,294 @@
+name: temp-global-month-skill-run
+
+on:
+  pull_request:
+
+jobs:
+  run:
+    if: github.head_ref == 'chore/global-month-skill-run-20260920'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch 30-day multi-market Rising data
+        env:
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SEO_DATA_API_KEY"
+          echo "::add-mask::$SEO_DATA_API_KEY"
+
+          python - <<'PY'
+          import concurrent.futures
+          import datetime as dt
+          import json
+          import math
+          import os
+          import statistics
+          import time
+          import urllib.error
+          import urllib.request
+          from collections import defaultdict
+
+          API = "https://newwords-discovery.vercel.app/api/v1/trends"
+          KEY = os.environ["SEO_DATA_API_KEY"]
+
+          COUNTRIES = [
+              "US", "GB", "CA", "AU",
+              "BR", "MX", "AR",
+              "IN", "ID",
+              "JP", "KR",
+              "DE", "FR", "ES", "IT",
+              "ZA",
+          ]
+
+          end = dt.date(2026, 9, 19)
+          dates = [(end - dt.timedelta(days=i)).isoformat() for i in range(29, -1, -1)]
+
+          def fetch(country, refresh_date):
+              payload = json.dumps({
+                  "kind": "rising",
+                  "country_code": country,
+                  "refresh_date": refresh_date,
+                  "limit": 25,
+              }).encode()
+              req = urllib.request.Request(
+                  API,
+                  data=payload,
+                  headers={
+                      "Authorization": f"Bearer {KEY}",
+                      "Content-Type": "application/json",
+                  },
+                  method="POST",
+              )
+              last_err = None
+              for attempt in range(3):
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          body = json.load(resp)
+                          return {
+                              "country": country,
+                              "date": refresh_date,
+                              "status": resp.status,
+                              "body": body,
+                          }
+                  except Exception as exc:
+                      last_err = repr(exc)
+                      time.sleep(1.5 * (attempt + 1))
+              return {
+                  "country": country,
+                  "date": refresh_date,
+                  "status": None,
+                  "error": last_err,
+              }
+
+          tasks = [(c, d) for c in COUNTRIES for d in dates]
+          rows = []
+          with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+              futs = {ex.submit(fetch, c, d): (c, d) for c, d in tasks}
+              for idx, fut in enumerate(concurrent.futures.as_completed(futs), 1):
+                  rows.append(fut.result())
+                  if idx % 50 == 0:
+                      print(f"completed={idx}/{len(tasks)}")
+
+          errors = [r for r in rows if r.get("status") != 200]
+          ok = [r for r in rows if r.get("status") == 200]
+
+          agg = {}
+          raw_occurrences = 0
+          total_processed = 0
+          total_billed = 0
+          cache_hits = 0
+
+          def norm(s):
+              return " ".join((s or "").strip().lower().split())
+
+          for r in ok:
+              body = r["body"]
+              usage = body.get("usage") or {}
+              total_processed += int(usage.get("total_bytes_processed") or 0)
+              total_billed += int(usage.get("total_bytes_billed") or 0)
+              cache_hits += int(bool(usage.get("cache_hit")))
+              for item in body.get("results") or []:
+                  term = item.get("term")
+                  n = norm(term)
+                  if not n:
+                      continue
+                  raw_occurrences += 1
+                  rec = agg.setdefault(n, {
+                      "term": term,
+                      "variants": set(),
+                      "occurrences": 0,
+                      "countries": set(),
+                      "dates": set(),
+                      "best_rank": None,
+                      "max_percent_gain": None,
+                      "first_date": None,
+                      "last_date": None,
+                      "latest_country": None,
+                      "latest_history": [],
+                  })
+                  rec["variants"].add(term)
+                  rec["occurrences"] += 1
+                  rec["countries"].add(r["country"])
+                  rec["dates"].add(r["date"])
+                  rank = item.get("rank")
+                  if isinstance(rank, int):
+                      rec["best_rank"] = rank if rec["best_rank"] is None else min(rec["best_rank"], rank)
+                  pg = item.get("percent_gain")
+                  if isinstance(pg, (int, float)):
+                      rec["max_percent_gain"] = pg if rec["max_percent_gain"] is None else max(rec["max_percent_gain"], pg)
+                  if rec["first_date"] is None or r["date"] < rec["first_date"]:
+                      rec["first_date"] = r["date"]
+                  if rec["last_date"] is None or r["date"] > rec["last_date"]:
+                      rec["last_date"] = r["date"]
+                      rec["term"] = term
+                      rec["latest_country"] = r["country"]
+                      rec["latest_history"] = item.get("history") or []
+
+          def mean_nonnull(points):
+              xs = [float(x) for x in points if x is not None]
+              return None if not xs else sum(xs) / len(xs)
+
+          def summarize_history(hist):
+              scores = [p.get("score") for p in hist]
+              nonnull = [float(x) for x in scores if x is not None]
+              recent4 = mean_nonnull(scores[-4:])
+              recent12 = mean_nonnull(scores[-12:])
+              prior52 = mean_nonnull(scores[-64:-12]) if len(scores) >= 64 else None
+              prior_all = mean_nonnull(scores[:-12]) if len(scores) > 12 else None
+              prior_nonnull = sum(x is not None for x in scores[:-12])
+              recent_nonnull = sum(x is not None for x in scores[-12:])
+              current = next((float(x) for x in reversed(scores) if x is not None), None)
+              hist_max_before12 = max([float(x) for x in scores[:-12] if x is not None], default=None)
+              recent12_max = max([float(x) for x in scores[-12:] if x is not None], default=None)
+
+              ratio = None
+              if recent12 is not None and prior52 is not None:
+                  ratio = recent12 / max(prior52, 0.1)
+
+              return {
+                  "history_points": len(hist),
+                  "earliest_week": hist[0].get("week") if hist else None,
+                  "latest_week": hist[-1].get("week") if hist else None,
+                  "current_score": current,
+                  "recent4_mean": recent4,
+                  "recent12_mean": recent12,
+                  "prior52_mean": prior52,
+                  "prior_all_mean": prior_all,
+                  "prior_nonnull_weeks": prior_nonnull,
+                  "recent12_nonnull_weeks": recent_nonnull,
+                  "historical_max_before_recent12": hist_max_before12,
+                  "recent12_max": recent12_max,
+                  "recent12_vs_prior52_ratio": ratio,
+              }
+
+          out = []
+          for rec in agg.values():
+              h = summarize_history(rec.pop("latest_history"))
+              rec["variants"] = sorted(rec["variants"])
+              rec["countries"] = sorted(rec["countries"])
+              rec["dates"] = sorted(rec["dates"])
+              rec["country_count"] = len(rec["countries"])
+              rec["date_count"] = len(rec["dates"])
+              rec.update(h)
+              out.append(rec)
+
+          # This is ordering only, not an opportunity classification.
+          def priority_key(r):
+              ratio = r.get("recent12_vs_prior52_ratio")
+              if ratio is None or not math.isfinite(ratio):
+                  ratio = 0
+              return (
+                  r["country_count"],
+                  r["date_count"],
+                  min(r["occurrences"], 20),
+                  min(r.get("max_percent_gain") or 0, 10000),
+                  ratio,
+              )
+
+          out.sort(key=priority_key, reverse=True)
+
+          summary = {
+              "scope": {
+                  "kind": "rising",
+                  "countries": COUNTRIES,
+                  "country_count": len(COUNTRIES),
+                  "start_date": dates[0],
+                  "end_date": dates[-1],
+                  "calendar_days": len(dates),
+                  "per_day_limit": 25,
+              },
+              "requests": {
+                  "attempted": len(tasks),
+                  "http_200": len(ok),
+                  "errors": errors,
+              },
+              "usage": {
+                  "total_bytes_processed": total_processed,
+                  "total_bytes_billed": total_billed,
+                  "cache_hit_requests": cache_hits,
+              },
+              "counts": {
+                  "raw_term_occurrences": raw_occurrences,
+                  "unique_normalized_terms": len(out),
+              },
+              "terms": out,
+          }
+
+          with open("global_month_terms.json", "w", encoding="utf-8") as f:
+              json.dump(summary, f, ensure_ascii=False, indent=2)
+
+          # Compact CSV-like TSV for easier manual inspection.
+          with open("global_month_terms.tsv", "w", encoding="utf-8") as f:
+              cols = [
+                  "term","occurrences","country_count","date_count","countries",
+                  "first_date","last_date","best_rank","max_percent_gain",
+                  "current_score","recent4_mean","recent12_mean","prior52_mean",
+                  "prior_nonnull_weeks","historical_max_before_recent12",
+                  "recent12_max","recent12_vs_prior52_ratio"
+              ]
+              f.write("\t".join(cols)+"\n")
+              for r in out:
+                  vals = []
+                  for c in cols:
+                      v = r.get(c)
+                      if c == "countries":
+                          v = ",".join(v or [])
+                      vals.append("" if v is None else str(v).replace("\t"," "))
+                  f.write("\t".join(vals)+"\n")
+
+          print(json.dumps({
+              "scope": summary["scope"],
+              "requests": {
+                  "attempted": len(tasks),
+                  "http_200": len(ok),
+                  "error_count": len(errors),
+              },
+              "usage": summary["usage"],
+              "counts": summary["counts"],
+              "top20_by_cross_market_recurrence": [
+                  {
+                      "term": r["term"],
+                      "countries": r["countries"],
+                      "date_count": r["date_count"],
+                      "occurrences": r["occurrences"],
+                      "max_percent_gain": r["max_percent_gain"],
+                      "recent12_vs_prior52_ratio": r["recent12_vs_prior52_ratio"],
+                  }
+                  for r in out[:20]
+              ],
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: global-month-skill-data
+          path: |
+            global_month_terms.json
+            global_month_terms.tsv
+          retention-days: 1
