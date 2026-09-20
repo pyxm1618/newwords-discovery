@@ -1,0 +1,32 @@
+name: temp-final-candidate-volume
+
+on:
+  pull_request:
+
+jobs:
+  run:
+    if: github.head_ref == 'chore/global-month-skill-run-20260920'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check final borderline UK candidates
+        env:
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$SEO_DATA_API_KEY"
+          curl -sS -o /tmp/out.json -X POST 'https://newwords-discovery.vercel.app/api/v1/keyword-volume' \
+            -H "Authorization: Bearer $SEO_DATA_API_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"keywords":["dwp pension credit review bank statements","pension credit bank statements","state pension overtaxation hmrc refunds"],"geo_target_constant":"2826","language_constant":"1000","network":"GOOGLE_SEARCH"}'
+          python - <<'PY'
+          import json
+          d=json.load(open('/tmp/out.json'))
+          for r in d.get('results',[]):
+              print(json.dumps({
+                'keyword':r.get('keyword'),
+                'avg_monthly_searches':r.get('avg_monthly_searches'),
+                'competition':r.get('competition'),
+                'monthly_search_volumes':r.get('monthly_search_volumes')
+              },ensure_ascii=False))
+          PY
