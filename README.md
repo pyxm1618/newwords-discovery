@@ -42,6 +42,29 @@ The architecture rules for every additional API are:
 
 The current architecture is enforced by `tests/test_api_layout.py`.
 
+
+## Repository skills
+
+Repo-specific Codex skills live under:
+
+```text
+.agents/
+└── skills/
+    └── <skill-name>/
+        ├── SKILL.md
+        └── references/        # optional supporting methodology
+```
+
+This follows Codex repository-skill discovery conventions. Do not create a parallel top-level `skills/` directory for Codex auto-discovery.
+
+Current skill:
+
+- `.agents/skills/finding-trending-keywords/SKILL.md`: runs recent Google Trends discovery, researches why terms are rising, filters for durable SEO opportunity, and checks Google Ads volume only for retained candidates.
+
+Typical triggers include “分析最近1周的热词”, “找今天美国的热词机会”, and “recent rising keyword opportunities”.
+
+The skill is workflow/orchestration guidance only. It does not change the public API runtime or Vercel deployment surface.
+
 ## Public APIs
 
 Canonical domain:
