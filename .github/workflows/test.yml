@@ -17,3 +17,72 @@ jobs:
       - run: python -m pytest -q
       - run: python -m compileall -q api
       - run: python -m json.tool vercel.json >/dev/null
+
+      - name: Temporary latest US Rising opportunity sample
+        if: github.head_ref == 'chore/today-opportunity-sample-20260920'
+        shell: bash
+        env:
+          SEO_DATA_API_KEY: ${{ secrets.SEO_DATA_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SEO_DATA_API_KEY"
+          echo "::add-mask::$SEO_DATA_API_KEY"
+
+          code="$(curl -sS -o /tmp/trends.json -w '%{http_code}' \
+            -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
+            -H "Authorization: Bearer $SEO_DATA_API_KEY" \
+            -H 'Content-Type: application/json' \
+            --data '{"kind":"rising","country_code":"US","limit":25}')"
+          echo "status=$code"
+          test "$code" = "200"
+
+          python - <<'PY'
+          import json, statistics
+          from collections import defaultdict
+          data=json.load(open('/tmp/trends.json'))
+          print("QUERY=" + json.dumps(data.get("query"), ensure_ascii=False))
+          print("HISTORY_META=" + json.dumps(data.get("history"), ensure_ascii=False))
+          print("USAGE=" + json.dumps(data.get("usage"), ensure_ascii=False))
+          for item in data.get("results", []):
+              hist=item.get("history") or []
+              by_year=defaultdict(list)
+              vals=[]
+              for p in hist:
+                  s=p.get("score")
+                  w=p.get("week")
+                  if s is not None:
+                      vals.append(float(s))
+                      if w:
+                          by_year[str(w)[:4]].append(float(s))
+              recent12=[p.get("score") for p in hist[-12:]]
+              recent26=[p.get("score") for p in hist[-26:]]
+              recent52=[p.get("score") for p in hist[-52:]]
+              def compact(seq):
+                  xs=[float(x) for x in seq if x is not None]
+                  return {
+                    "non_null": len(xs),
+                    "mean": round(sum(xs)/len(xs),2) if xs else None,
+                    "max": round(max(xs),2) if xs else None,
+                    "last": round(xs[-1],2) if xs else None,
+                  }
+              yearly={y:{"max":round(max(v),2),"mean":round(sum(v)/len(v),2),"non_null":len(v)} for y,v in sorted(by_year.items())}
+              tops=sorted(
+                  [{"week":p.get("week"),"score":p.get("score")} for p in hist if p.get("score") is not None],
+                  key=lambda x: float(x["score"]),
+                  reverse=True
+              )[:5]
+              out={
+                "term":item.get("term"),
+                "rank":item.get("rank"),
+                "percent_gain":item.get("percent_gain"),
+                "points":len(hist),
+                "earliest_week":hist[0].get("week") if hist else None,
+                "latest_week":hist[-1].get("week") if hist else None,
+                "recent12_scores":recent12,
+                "recent26":compact(recent26),
+                "recent52":compact(recent52),
+                "yearly":yearly,
+                "top5_weeks":tops,
+              }
+              print("TERM=" + json.dumps(out, ensure_ascii=False, separators=(',',':')))
+          PY
