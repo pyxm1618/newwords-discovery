@@ -61,7 +61,8 @@ def test_mcp_lists_expected_read_only_tools():
     by_name = {tool.name: tool for tool in tools}
 
     assert set(by_name) == {"get_trending_keywords", "get_trending_now", "get_keyword_volume"}
-    assert by_name["get_trending_keywords"].annotations.read_only_hint is True\n    assert by_name["get_trending_now"].annotations.read_only_hint is True
+    assert by_name["get_trending_keywords"].annotations.read_only_hint is True
+    assert by_name["get_trending_now"].annotations.read_only_hint is True
     assert by_name["get_keyword_volume"].annotations.read_only_hint is True
 
 
