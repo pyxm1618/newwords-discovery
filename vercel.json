@@ -3,7 +3,11 @@
   "functions": {
     "api/v1/*.py": {
       "maxDuration": 30,
-      "excludeFiles": "{tests/**,docs/**,**/__pycache__/**,**/*.pyc}"
+      "excludeFiles": "{tests/**,docs/**,chatgpt-plugin/**,**/__pycache__/**,**/*.pyc}"
+    },
+    "api/mcp.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{tests/**,docs/**,chatgpt-plugin/**,**/__pycache__/**,**/*.pyc}"
     }
   }
 }

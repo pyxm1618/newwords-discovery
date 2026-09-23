@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "newwords-discovery",
+  "version": "0.1.0",
+  "description": "Discover emerging SEO keyword opportunities with Google Trends history and Google Ads search-volume validation.",
+  "author": {
+    "name": "pyxm1618"
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Newwords Discovery",
+        "shortDescription": "Find and validate emerging SEO keyword opportunities",
+        "longDescription": "Use Google Trends Rising or Top data with rolling history, then validate retained keyword candidates with Google Ads historical metrics.",
+        "developerName": "pyxm1618",
+        "category": "Productivity",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": "Find recent emerging keyword opportunities and filter them for durable SEO demand."
+      }
+    }
+  }
+}
