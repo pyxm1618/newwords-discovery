@@ -6,66 +6,26 @@ on:
     paths: [.github/workflows/tmp-trending-now-preview-smoke.yml]
 
 jobs:
-  smoke:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python -m pip install 'mcp==2.2.0'
-      - name: Smoke preview MCP
+      - name: Diagnose preview accessibility
         shell: bash
         run: |
-          cat >/tmp/smoke.py <<'PY'
-          import asyncio
-          import json
-          from mcp import Client
-
-          URL = "https://newwords-discovery-frkt3449o-pyxm1618s-projects.vercel.app/api/mcp"
-
-          async def main():
-              async with Client(URL) as client:
-                  listed = await client.list_tools()
-                  names = {tool.name for tool in listed.tools}
-                  expected = {"get_trending_now", "get_trending_keywords", "get_keyword_volume"}
-                  if names != expected:
-                      raise RuntimeError(f"unexpected MCP tools: {sorted(names)}")
-
-                  for cc in ("US", "IN", "BR"):
-                      r = await client.call_tool(
-                          "get_trending_now",
-                          {"country_code": cc, "hours": 4, "limit": 3},
-                      )
-                      if r.is_error:
-                          raise RuntimeError(f"{cc} realtime error: {r.content}")
-                      p = r.structured_content or {}
-                      rows = p.get("results") or []
-                      if not rows:
-                          raise RuntimeError(f"{cc} realtime returned zero rows")
-                      if p.get("source") != "google_trending_now_rpc":
-                          raise RuntimeError(f"{cc} wrong source: {p.get('source')}")
-                      print("REALTIME", cc, json.dumps({
-                          "observed_at": p.get("observed_at"),
-                          "count": len(rows),
-                          "first": rows[0],
-                      }, ensure_ascii=False))
-
-                  daily = await client.call_tool(
-                      "get_trending_keywords",
-                      {"kind": "rising", "country_code": "US", "limit": 1},
-                  )
-                  if daily.is_error or not (daily.structured_content or {}).get("results"):
-                      raise RuntimeError(f"existing BigQuery regression: {daily.content}")
-
-                  ads = await client.call_tool(
-                      "get_keyword_volume",
-                      {"keywords": ["i ching online"]},
-                  )
-                  if ads.is_error or not (ads.structured_content or {}).get("results"):
-                      raise RuntimeError(f"existing Ads regression: {ads.content}")
-
-                  print("PREVIEW_SMOKE_OK")
-
-          asyncio.run(main())
-          PY
-          python /tmp/smoke.py
+          URL='https://newwords-discovery-frkt3449o-pyxm1618s-projects.vercel.app/api/mcp'
+          echo '=== GET ==='
+          curl -sS -D /tmp/get.headers -o /tmp/get.body --max-time 20 "$URL" || true
+          cat /tmp/get.headers
+          head -c 1000 /tmp/get.body || true
+          echo
+          echo '=== POST initialize ==='
+          cat >/tmp/init.json <<'JSON'
+          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"preview-diagnostic","version":"1.0"}}}
+          JSON
+          curl -sS -D /tmp/post.headers -o /tmp/post.body --max-time 20 \
+            -X POST "$URL" \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            --data-binary @/tmp/init.json || true
+          cat /tmp/post.headers
+          cat /tmp/post.body
