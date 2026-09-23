@@ -1,1 +1,2 @@
 google-cloud-bigquery==3.45.2
+mcp==2.2.0
