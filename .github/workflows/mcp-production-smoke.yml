@@ -44,7 +44,7 @@ jobs:
                   missing = expected - names
                   if missing:
                       print(f"deployment not ready; missing MCP tools: {sorted(missing)}")
-                      raise SystemExit(75)
+                      return 75
 
                   for country_code in ("US", "IN", "BR"):
                       realtime = await client.call_tool(
@@ -83,8 +83,9 @@ jobs:
                   print("MCP production smoke passed")
                   print(f"tools={sorted(names)}")
                   print("trending_now_countries=US,IN,BR")
+                  return 0
 
-          asyncio.run(main())
+          raise SystemExit(asyncio.run(main()))
           PY
 
           for attempt in $(seq 1 36); do
