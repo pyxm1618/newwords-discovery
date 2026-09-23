@@ -8,6 +8,7 @@ def test_all_runtime_api_code_lives_under_api_tree():
     assert not (ROOT / "src").exists()
     assert (ROOT / "api" / "v1" / "keyword-volume.py").is_file()
     assert (ROOT / "api" / "v1" / "trends.py").is_file()
+    assert (ROOT / "api" / "v1" / "trending-now.py").is_file()
     assert (ROOT / "api" / "lib").is_dir()
 
 
@@ -19,6 +20,8 @@ def test_private_api_modules_follow_vercel_helper_naming():
         "_http.py",
         "_endpoint.py",
         "_trends_endpoint.py",
+        "_trending_now_endpoint.py",
+        "_trending_now.py",
         "_google_ads.py",
         "_google_bigquery.py",
         "_keyword_volume.py",

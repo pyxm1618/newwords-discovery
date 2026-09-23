@@ -7,6 +7,7 @@
 ```text
 POST https://newwords-discovery.vercel.app/api/v1/keyword-volume
 POST https://newwords-discovery.vercel.app/api/v1/trends
+POST https://newwords-discovery.vercel.app/api/v1/trending-now
 ```
 
 Agent 使用固定生产域名，不使用随机 Preview URL 作为长期配置。
@@ -74,6 +75,48 @@ network: GOOGLE_SEARCH
 - Google Ads `competition` / `competition_index` 是广告竞争，不是 SEO KD。
 - 不要把 Keyword Volume API 当成新词发现源本身。
 
+### Google Trending Now RPC
+
+用途：获取 Google Trends “Trending now” 当前实时趋势池。该链路直接读取 Google Trends 网页正在使用的 `batchexecute` RPC，不经过 BigQuery、Google Ads 或 Google Trends API Alpha。
+
+```bash
+curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trending-now' \
+  -H "Authorization: Bearer $NEWWORDS_DISCOVERY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"country_code":"US","hours":4,"limit":50,"hl":"en"}'
+```
+
+支持窗口：
+
+```text
+4 hours
+24 hours
+48 hours
+168 hours (7 days)
+```
+
+默认：
+
+```text
+country_code: US
+hours: 4
+limit: 50
+hl: en
+```
+
+注意：
+
+- 数据源标记固定为 `source=google_trending_now_rpc`。
+- 这是 Google 网页内部使用的未公开 RPC，不是正式开发者 API；Google 可能变更 RPC id、响应结构或限流策略。
+- 该接口当前无需 Google API key，也不消耗 BigQuery 查询额度或 Google Ads operation。
+- **没有 RSS 自动降级。** RPC 失败、429、协议变化或无数据时，调用方必须看到真实失败/空结果，不能把别的数据源伪装成 RPC。
+- 一个国家 + 一个窗口默认只调用一次。查不到时不要自动向前扫 BigQuery 多天来“确认没有”，避免无意义扫描费用。
+- `search_volume` 是 Trending Now RPC 返回的实时趋势规模信号，不等于 Google Ads 月搜索量。
+- `increase_percentage` 是当前窗口中的上升百分比，不是 SEO KD。
+- `trend_breakdown` 是 Google 聚合到同一趋势下的相关/变体查询，可用于识别真正的衍生需求。
+- `started_at` / `ended_at` / `active` 用于判断趋势是否仍处在异常上升期。
+- 返回的 `news_refs` 只是 Google 内部新闻引用标识；当前接口不自动解析新闻正文。
+
 ### Google Trends BigQuery
 
 用途：从 Google Trends 公共 BigQuery 数据中获取每日 Top / Rising 候选词，并直接拿到该候选词在同一 `refresh_date` partition 中自带的 rolling weekly history。
@@ -131,18 +174,19 @@ curl -X POST 'https://newwords-discovery.vercel.app/api/v1/trends' \
 
 ## 找新词时的调用顺序
 
-1. 用 `/api/v1/trends` 的 `rising` 获取每日候选词和完整 rolling weekly history。
-2. 下游 AI 先利用 history 判断过去长期低基数、首次出现、连续爬升、单周尖峰、回落后二次爬升、历史重复/季节性等生命周期事实；这些判断不在 API 内硬编码。
-3. 再按业务规则排除品牌词、事件噪声和明显无关词。
-4. 把保留候选批量发送给 `/api/v1/keyword-volume` 获取 Google Ads 搜索量。
-5. KD、allintitle 等指标继续调用各自数据源；不要拿 Ads competition 或 BigQuery rank 代替。
-6. 保存 Trends 的 `refresh_date`、history metadata 与 `usage`，保证结果可追溯。
+1. 对“现在 / 最新 / 最近4小时”类请求，先用 `/api/v1/trending-now` 做实时发现；一个国家只请求一次目标窗口，失败或空结果就如实报告。
+2. 用 `/api/v1/trends` 的 `rising` 做每日回溯和 rolling weekly history 生命周期验证；多日查询按用户要求收集实际存在的分区，不为证明“没有”而无限向前扫描。
+3. 下游 AI 综合实时 started/active/growth 与 BigQuery history 判断首次出现、连续爬升、尖峰、回落、复发和季节性。
+4. 再按业务规则排除品牌词、事件噪声和明显无关词。
+5. 把保留候选批量发送给 `/api/v1/keyword-volume` 获取 Google Ads 历史月搜索量。
+6. KD、allintitle 等指标继续调用各自数据源；不要拿 Trending Now volume、Ads competition 或 BigQuery rank 代替。
+7. 保存实时 `observed_at` / `hours`，以及每日 Trends 的 `refresh_date`、history metadata 与 `usage`，保证结果可追溯。
 
 ## 错误与验证规则
 
 - `401`：调用端 API Key 缺失或错误。只报告调用端密钥未配置/无效，不要求用户在聊天中粘贴真实密钥。
 - `500 server_configuration_error`：服务端对应数据源的环境变量不完整。不要误判成关键词无数据。
-- `502/504`：上游 Google 服务失败或超时。不要把失败响应写入正式关键词结果。
+- `502 upstream_rate_limited`：Google Trending Now RPC 对当前请求限流。直接报告该国家实时源暂不可用；不要自动用 RSS 或 BigQuery 冒充实时结果。\n- `502/504`：上游 Google 服务失败或超时。不要把失败响应写入正式关键词结果。
 - 文档存在路由并不等于当前生产部署和上游凭据已经验证。需要声明“已真实可用”时，应同时确认当前 Vercel deployment 为 READY，并完成真实 authenticated smoke。
 
 ## 一次配置

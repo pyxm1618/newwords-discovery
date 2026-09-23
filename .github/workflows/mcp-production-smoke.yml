@@ -26,6 +26,7 @@ jobs:
         run: |
           cat >/tmp/mcp_smoke.py <<'PY'
           import asyncio
+          import sys
 
           from mcp import Client
 
@@ -35,10 +36,35 @@ jobs:
               async with Client(URL) as client:
                   listed = await client.list_tools()
                   names = {tool.name for tool in listed.tools}
-                  expected = {"get_trending_keywords", "get_keyword_volume"}
+                  expected = {
+                      "get_trending_keywords",
+                      "get_trending_now",
+                      "get_keyword_volume",
+                  }
                   missing = expected - names
                   if missing:
-                      raise RuntimeError(f"missing MCP tools: {sorted(missing)}")
+                      print(f"deployment not ready; missing MCP tools: {sorted(missing)}")
+                      raise SystemExit(75)
+
+                  for country_code in ("US", "IN", "BR"):
+                      realtime = await client.call_tool(
+                          "get_trending_now",
+                          {
+                              "country_code": country_code,
+                              "hours": 4,
+                              "limit": 1,
+                          },
+                      )
+                      if realtime.is_error or not realtime.structured_content:
+                          raise RuntimeError(
+                              f"Trending Now smoke failed for {country_code}: "
+                              f"{realtime.content}"
+                          )
+                      results = realtime.structured_content.get("results") or []
+                      if not results:
+                          raise RuntimeError(
+                              f"Trending Now returned no 4h results for {country_code}"
+                          )
 
                   trends = await client.call_tool(
                       "get_trending_keywords",
@@ -56,17 +82,30 @@ jobs:
 
                   print("MCP production smoke passed")
                   print(f"tools={sorted(names)}")
+                  print("trending_now_countries=US,IN,BR")
 
           asyncio.run(main())
           PY
 
           for attempt in $(seq 1 36); do
             echo "MCP smoke attempt $attempt/36"
-            if python /tmp/mcp_smoke.py; then
+            set +e
+            python /tmp/mcp_smoke.py
+            code=$?
+            set -e
+
+            if [ "$code" -eq 0 ]; then
               exit 0
             fi
-            sleep 10
+
+            if [ "$code" -eq 75 ]; then
+              sleep 10
+              continue
+            fi
+
+            echo "MCP production smoke reached the new deployment but upstream validation failed" >&2
+            exit "$code"
           done
 
-          echo "MCP production smoke did not pass before timeout" >&2
+          echo "MCP production deployment did not expose the expected tools before timeout" >&2
           exit 1

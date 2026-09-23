@@ -19,6 +19,15 @@ from api.lib._keyword_volume import (
     validate_keyword_volume_request,
 )
 from api.lib._trends import TrendsRequestValidationError, validate_trends_request
+from api.lib._trending_now import (
+    GoogleTrendingNowClient,
+    TrendingNowProtocolError,
+    TrendingNowRateLimited,
+    TrendingNowRequestValidationError,
+    TrendingNowServiceError,
+    TrendingNowTimeout,
+    validate_trending_now_request,
+)
 
 
 MCP_MAX_KEYWORDS = 100
@@ -26,8 +35,9 @@ MCP_MAX_KEYWORDS = 100
 mcp = MCPServer(
     "newwords-discovery",
     instructions=(
-        "Read-only SEO discovery data. Use get_trending_keywords to discover "
-        "Google Trends Top/Rising candidates and get_keyword_volume only after "
+        "Read-only SEO discovery data. Use get_trending_now for real-time "
+        "Google Trending Now discovery, get_trending_keywords for daily "
+        "Top/Rising lifecycle validation, and get_keyword_volume only after "
         "a candidate has passed the SEO opportunity filter."
     ),
 )
@@ -99,6 +109,48 @@ def get_trending_keywords(
         "usage": upstream["usage"],
         "results": upstream["results"],
     }
+
+
+@mcp.tool(
+    title="Get trending now",
+    description=(
+        "Return Google Trends Trending Now results from the current web RPC "
+        "for one country and one supported window: 4, 24, 48, or 168 hours. "
+        "This is the real-time discovery source. It does not use BigQuery, "
+        "Google Ads, the Google Trends API Alpha, or RSS fallback. "
+        "If Google rate-limits or changes the undocumented RPC, the tool fails "
+        "explicitly instead of silently substituting another source."
+    ),
+    annotations=READ_ONLY_EXTERNAL,
+)
+def get_trending_now(
+    country_code: str = "US",
+    hours: Literal[4, 24, 48, 168] = 4,
+    limit: int = 50,
+    hl: str = "en",
+) -> dict[str, Any]:
+    try:
+        request = validate_trending_now_request(
+            {
+                "country_code": country_code,
+                "hours": hours,
+                "limit": limit,
+                "hl": hl,
+            }
+        )
+    except TrendingNowRequestValidationError as exc:
+        raise ValueError(str(exc)) from exc
+
+    try:
+        return GoogleTrendingNowClient().fetch(request)
+    except TrendingNowRateLimited as exc:
+        raise RuntimeError(
+            "Google Trending Now RPC rate limited the request."
+        ) from exc
+    except TrendingNowTimeout as exc:
+        raise RuntimeError("Google Trending Now RPC request timed out.") from exc
+    except (TrendingNowProtocolError, TrendingNowServiceError) as exc:
+        raise RuntimeError("Google Trending Now RPC request failed.") from exc
 
 
 @mcp.tool(

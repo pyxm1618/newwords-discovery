@@ -34,6 +34,21 @@ class _FakeTrendsClient:
         }
 
 
+class _FakeTrendingNowClient:
+    def fetch(self, request):
+        return {
+            "source": "google_trending_now_rpc",
+            "observed_at": "2026-09-23T00:00:00Z",
+            "query": {
+                "country_code": request.country_code,
+                "hours": request.hours,
+                "limit": request.limit,
+                "hl": request.hl,
+            },
+            "results": [{"query": "example realtime trend", "position": 1}],
+        }
+
+
 class _FakeAdsClient:
     def __init__(self, settings):
         self.settings = settings
@@ -60,8 +75,9 @@ def test_mcp_lists_expected_read_only_tools():
     tools = anyio.run(mcp_module.mcp.list_tools)
     by_name = {tool.name: tool for tool in tools}
 
-    assert set(by_name) == {"get_trending_keywords", "get_keyword_volume"}
+    assert set(by_name) == {"get_trending_keywords", "get_trending_now", "get_keyword_volume"}
     assert by_name["get_trending_keywords"].annotations.read_only_hint is True
+    assert by_name["get_trending_now"].annotations.read_only_hint is True
     assert by_name["get_keyword_volume"].annotations.read_only_hint is True
 
 
@@ -93,6 +109,30 @@ def test_get_trending_keywords_uses_existing_trends_contract(monkeypatch):
     }
     assert result["results"][0]["term"] == "example term"
     assert result["usage"]["total_bytes_processed"] == 123
+
+
+def test_get_trending_now_uses_realtime_rpc_contract(monkeypatch):
+    monkeypatch.setattr(
+        mcp_module,
+        "GoogleTrendingNowClient",
+        _FakeTrendingNowClient,
+    )
+
+    result = mcp_module.get_trending_now(
+        country_code="IN",
+        hours=4,
+        limit=10,
+        hl="en-IN",
+    )
+
+    assert result["source"] == "google_trending_now_rpc"
+    assert result["query"] == {
+        "country_code": "IN",
+        "hours": 4,
+        "limit": 10,
+        "hl": "en-IN",
+    }
+    assert result["results"][0]["query"] == "example realtime trend"
 
 
 def test_get_keyword_volume_uses_existing_ads_contract(monkeypatch):
