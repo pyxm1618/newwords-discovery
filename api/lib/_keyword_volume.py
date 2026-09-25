@@ -104,6 +104,7 @@ def normalize_google_results(data: dict[str, Any]) -> list[dict[str, Any]]:
         normalized.append(
             {
                 "keyword": item.get("text"),
+                "close_variants": list(item.get("closeVariants") or []),
                 "avg_monthly_searches": _optional_int(metrics.get("avgMonthlySearches")),
                 "competition": metrics.get("competition"),
                 "competition_index": _optional_int(metrics.get("competitionIndex")),
