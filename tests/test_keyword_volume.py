@@ -65,6 +65,7 @@ def test_normalization_preserves_missing_metrics_as_none_and_numeric_zero_as_zer
         "results": [
             {
                 "text": "three coin method",
+                "closeVariants": ["three coins method", "3 coin method"],
                 "keywordMetrics": {
                     "competitionIndex": "0",
                     "monthlySearchVolumes": [
@@ -80,6 +81,7 @@ def test_normalization_preserves_missing_metrics_as_none_and_numeric_zero_as_zer
     assert results == [
         {
             "keyword": "three coin method",
+            "close_variants": ["three coins method", "3 coin method"],
             "avg_monthly_searches": None,
             "competition": None,
             "competition_index": 0,
